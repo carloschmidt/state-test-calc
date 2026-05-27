@@ -2099,6 +2099,26 @@
         rhs = rhsNode.toString();
         return { fn: rhs, closed: true, skipBoundsCheck: false, _inequality: { above, strict } };
       }
+      // Vertical inequality: `x op constant` or `constant op x` (x not on both sides)
+      let xExpr, vOp;
+      if (/^\s*x\s*$/i.test(ineqAny[1])) { xExpr = ineqAny[3]; vOp = rawOp; }
+      else if (/^\s*x\s*$/i.test(ineqAny[3])) { xExpr = ineqAny[1]; vOp = flipOp(rawOp); }
+      else { xExpr = null; }
+      if (xExpr !== null && vOp) {
+        let val;
+        try {
+          const e = latexToExpr(xExpr.trim());
+          if (!e) return null;
+          const n = math.parse(e);
+          // Free symbols must reduce to constants after slider substitution
+          const subst = autoPromoteAndSubstitute(n, []);
+          val = subst.evaluate({});
+        } catch (_) { return null; }
+        if (typeof val !== 'number' || !Number.isFinite(val)) return null;
+        const strict = (vOp === '<' || vOp === '>');
+        const right = (vOp === '>' || vOp === '>=');
+        return { _xInequality: { x: val, right, strict } };
+      }
     }
     // ----- Implicit equation: anything with both x AND y AND "=" -----
     const eqMatch = /^\s*([^=]+?)\s*=\s*([^=]+?)\s*$/.exec(trimmed);
@@ -2717,6 +2737,7 @@
     // needs a non-zero size to compute its viewport)
     if (!document.getElementById('view-graphing').classList.contains('active')) return;
     const data = [];
+    const xInequalities = [];  // {x, right, strict, color} — drawn after function-plot
     // Snapshot rows because the dispatcher may auto-promote sliders (which
     // push new rows onto graphState.rows mid-iteration).
     const rowsSnapshot = [...graphState.rows];
@@ -2731,6 +2752,11 @@
       if (r.type === 'slider' || r.type === 'table') continue;
       const spec = latexToGraphableFn(r.mathfield?.value || '');
       if (spec) {
+        if (spec._xInequality) {
+          // Vertical inequalities are drawn manually after function-plot renders.
+          xInequalities.push({ ...spec._xInequality, color: r.color });
+          continue;
+        }
         // For implicit (and other non-linear) fnTypes, omit graphType — function-plot
         // chooses the right renderer based on fnType alone, and supplying both confuses it.
         const entry = { color: r.color, ...spec };
@@ -2764,6 +2790,39 @@
       chart = functionPlot(cfg);
     } catch (e) {
       try { chart = functionPlot({ ...cfg, data: [] }); } catch (_) {}
+    }
+    // Draw vertical inequalities (x ≥ c, x < c, etc.) manually — function-plot
+    // is y=f(x) based and can't render vertical boundaries directly.
+    if (xInequalities.length > 0 && chart && chart.meta) {
+      const svgRoot = graphEl.querySelector('svg');
+      const canvas = svgRoot?.querySelector('g.canvas');
+      const xScale = chart.meta.xScale, yScale = chart.meta.yScale;
+      if (svgRoot && canvas && xScale && yScale) {
+        const innerH = yScale(graphSettings.yMin) - yScale(graphSettings.yMax);
+        const innerW = xScale(graphSettings.xMax) - xScale(graphSettings.xMin);
+        const xLeft = xScale(graphSettings.xMin), xRight = xScale(graphSettings.xMax);
+        const yTop = yScale(graphSettings.yMax);
+        for (const ineq of xInequalities) {
+          const xPx = xScale(ineq.x);
+          const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+          rect.setAttribute('x', ineq.right ? xPx : xLeft);
+          rect.setAttribute('y', yTop);
+          rect.setAttribute('width', ineq.right ? (xRight - xPx) : (xPx - xLeft));
+          rect.setAttribute('height', innerH);
+          rect.setAttribute('fill', ineq.color);
+          rect.setAttribute('fill-opacity', '0.3');
+          rect.setAttribute('pointer-events', 'none');
+          canvas.appendChild(rect);
+          const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+          line.setAttribute('x1', xPx); line.setAttribute('x2', xPx);
+          line.setAttribute('y1', yTop); line.setAttribute('y2', yTop + innerH);
+          line.setAttribute('stroke', ineq.color);
+          line.setAttribute('stroke-width', '1.5');
+          if (ineq.strict) line.setAttribute('stroke-dasharray', '6,4');
+          line.setAttribute('pointer-events', 'none');
+          canvas.appendChild(line);
+        }
+      }
     }
     // Post-process inequality fills: function-plot's `closed: true` always
     // closes the area down to y=0, which only shades correctly when the
