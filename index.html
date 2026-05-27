@@ -242,6 +242,9 @@
     height: 100%;
   }
   #graph svg { display: block; }
+  /* Scatter dots default to r=1 in function-plot; bump to r=3 so plotted points
+     match the size of the hover indicator circle that appears on curves. */
+  #graph svg circle.scatter { r: 3; }
   #graph.hide-x-axis .x.axis { display: none; }
   #graph.hide-y-axis .y.axis { display: none; }
   #graph.hide-axis-numbers .x.axis .tick text,
@@ -2069,21 +2072,33 @@
       const closed = [...pts, pts[0]];
       return { fnType: 'points', points: closed, graphType: 'polyline' };
     }
-    // ----- Inequality: y < expr, y > expr, y <= expr, y >= expr -----
-    const ineqMatch = /^\s*y\s*(<=|>=|\\le|\\ge|<|>)\s*(.+)$/i.exec(trimmed);
-    if (ineqMatch) {
-      const op = ineqMatch[1];
-      const above = (op === '>' || op === '>=' || op === '\\ge');
-      let rhs = latexToExpr(ineqMatch[2].trim());
-      if (!rhs) return null;
-      if (graphSettings.angle === 'degrees') rhs = applyDegMode(rhs);
-      let rhsNode;
-      try { rhsNode = math.parse(rhs); } catch (e) { return null; }
-      // Auto-promote sliders for free symbols (other than x/y)
-      rhsNode = autoPromoteAndSubstitute(rhsNode, ['x', 'y']);
-      rhs = rhsNode.toString();
-      // function-plot uses `closed: true` to fill between curve and a baseline
-      return { fn: rhs, closed: true, skipBoundsCheck: false };
+    // ----- Inequality: `y op expr` OR `expr op y` (op ∈ <, >, ≤, ≥) -----
+    // Normalize y to the LEFT side so we always plot `y op expr`. If the user
+    // wrote `expr op y` (e.g. "x >= y"), swap sides and flip the operator.
+    const normalizeOp = raw => raw.replace(/\\le\b/g, '<=').replace(/\\ge\b/g, '>=').replace(/\\leq\b/g, '<=').replace(/\\geq\b/g, '>=');
+    const flipOp = op => ({ '<': '>', '>': '<', '<=': '>=', '>=': '<=' }[op]);
+    const ineqAny = /^\s*(.+?)\s*(<=|>=|\\le|\\ge|\\leq|\\geq|<|>)\s*(.+?)\s*$/i.exec(trimmed);
+    if (ineqAny) {
+      const rawOp = normalizeOp(ineqAny[2]);
+      let exprSide, op;
+      if (/^\s*y\s*$/i.test(ineqAny[1])) { exprSide = ineqAny[3]; op = rawOp; }
+      else if (/^\s*y\s*$/i.test(ineqAny[3])) { exprSide = ineqAny[1]; op = flipOp(rawOp); }
+      else { exprSide = null; }
+      if (exprSide !== null && op) {
+        const strict = (op === '<' || op === '>');
+        const above = (op === '>' || op === '>=');
+        let rhs = latexToExpr(exprSide.trim());
+        if (!rhs) return null;
+        if (graphSettings.angle === 'degrees') rhs = applyDegMode(rhs);
+        let rhsNode;
+        try { rhsNode = math.parse(rhs); } catch (e) { return null; }
+        // Auto-promote sliders for free symbols (other than x/y)
+        rhsNode = autoPromoteAndSubstitute(rhsNode, ['x', 'y']);
+        // The boundary line must be on the y vs x grid — `rhs` may not actually
+        // reference x (e.g. "y > 5"); function-plot still graphs it as constant.
+        rhs = rhsNode.toString();
+        return { fn: rhs, closed: true, skipBoundsCheck: false, _inequality: { above, strict } };
+      }
     }
     // ----- Implicit equation: anything with both x AND y AND "=" -----
     const eqMatch = /^\s*([^=]+?)\s*=\s*([^=]+?)\s*$/.exec(trimmed);
@@ -2568,6 +2583,31 @@
     return [latex.slice(0, i).trim(), latex.slice(condStart, condEnd).trim()];
   }
 
+  // Rewrite a function-plot inequality fill path so it closes at the top
+  // (`above=true`) or bottom (`above=false`) of the SVG viewport instead of
+  // the y=0 baseline. The path's tail is a run of L commands all at the same
+  // y (the closing baseline) — walk backward from the end and replace those y
+  // values with the target edge.
+  function reshadeInequalityPath(pathEl, above, svgHeight) {
+    const d = pathEl.getAttribute('d');
+    if (!d) return;
+    const tokens = [...d.matchAll(/([MLT])([-\d.]+),([-\d.]+)|Z/g)].map(m =>
+      m[0] === 'Z' ? { type: 'Z' } : { type: m[1], x: parseFloat(m[2]), y: parseFloat(m[3]) }
+    );
+    if (tokens.length < 3) return;
+    let i = tokens.length - 1;
+    if (tokens[i].type === 'Z') i--;
+    if (i < 0) return;
+    const baseline = tokens[i].y;
+    const targetY = above ? 0 : svgHeight;
+    while (i >= 0 && tokens[i].type !== 'Z' && Math.abs(tokens[i].y - baseline) < 0.5) {
+      tokens[i] = { type: tokens[i].type, x: tokens[i].x, y: targetY };
+      i--;
+    }
+    const rebuilt = tokens.map(c => c.type === 'Z' ? 'Z' : `${c.type}${c.x},${c.y}`).join('');
+    pathEl.setAttribute('d', rebuilt);
+  }
+
   // Parse "x > 0", "-2 < x < 5", "x >= 1 and x < 4", "x \\le \\pi" → [lo, hi]
   // Bounds evaluated via math.evaluate so \pi, sqrt(2), etc. are accepted.
   function parseRangeCondition(cond) {
@@ -2724,6 +2764,33 @@
       chart = functionPlot(cfg);
     } catch (e) {
       try { chart = functionPlot({ ...cfg, data: [] }); } catch (_) {}
+    }
+    // Post-process inequality fills: function-plot's `closed: true` always
+    // closes the area down to y=0, which only shades correctly when the
+    // boundary line happens to lie above zero. Rewrite each inequality path
+    // so it closes at the appropriate viewport edge (top for `>` / `>=`,
+    // bottom for `<` / `<=`), and dash the boundary for strict inequalities.
+    {
+      const svg = graphEl.querySelector('svg');
+      if (svg) {
+        const svgHeight = svg.clientHeight || cfg.height;
+        const ineqMetas = data.map(d => d._inequality).filter(Boolean);
+        // function-plot renders each closed/area entry as a path.line with
+        // fill-opacity set. We assume DOM order matches data order.
+        const closedPaths = [...svg.querySelectorAll('path.line')].filter(p => {
+          const fo = p.getAttribute('fill-opacity');
+          return fo && parseFloat(fo) > 0 && parseFloat(fo) < 1;
+        });
+        const ineqIndices = data.map((d, i) => d._inequality ? i : -1).filter(i => i >= 0);
+        // Build a parallel array of closed paths in the same order as ineqMetas.
+        // Since both `closedPaths` and `ineqIndices` are in render order, zip directly.
+        ineqMetas.forEach((meta, i) => {
+          const p = closedPaths[i];
+          if (!p) return;
+          reshadeInequalityPath(p, meta.above, svgHeight);
+          if (meta.strict) p.setAttribute('stroke-dasharray', '6,4');
+        });
+      }
     }
     // Wire pan/zoom: as the user pans or scroll-zooms the graph, update
     // graphSettings and the settings panel inputs to reflect the new domain.
