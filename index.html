@@ -94,6 +94,15 @@
   }
   .top-tab:hover:not(.active) { color: var(--blue); }
   .top-tab.active { color: var(--blue); border-bottom-color: var(--blue); }
+  .last-updated {
+    margin-left: auto;
+    align-self: center;
+    font-family: 'Open Sans', sans-serif;
+    font-size: 12px;
+    color: var(--muted);
+    padding-right: 4px;
+  }
+  .last-updated[hidden] { display: none; }
 
   /* View containers */
   .view { display: none; }
@@ -828,7 +837,9 @@
 <header class="top-tabs" role="tablist" aria-label="Calculator mode">
   <button type="button" class="top-tab active" role="tab" aria-selected="true" aria-controls="view-scientific" data-view="scientific">Scientific</button>
   <button type="button" class="top-tab" role="tab" aria-selected="false" aria-controls="view-graphing" data-view="graphing">Graphing</button>
+  <span class="last-updated" hidden>Last updated <time id="build-time"></time></span>
 </header>
+<script>window.__BUILD_TIME__ = '@@BUILD_TIME@@';</script>
 
 <div id="view-scientific" class="view active" role="tabpanel" aria-label="Scientific calculator">
 <div class="app">
@@ -3691,6 +3702,25 @@
     });
     el.scrollTop = el.scrollHeight;
   }
+
+  // Read the build-time placeholder injected at deploy. If it's still the
+  // literal placeholder string, we're running a local dev build — hide the
+  // chip. Otherwise format the ISO timestamp as a human-readable string.
+  (function showBuildTime() {
+    const raw = window.__BUILD_TIME__;
+    const el = document.getElementById('build-time');
+    if (!el) return;
+    const chip = el.closest('.last-updated');
+    if (!raw || raw === '@@' + 'BUILD_TIME@@') { if (chip) chip.hidden = true; return; }
+    const d = new Date(raw);
+    if (isNaN(d.getTime())) { if (chip) chip.hidden = true; return; }
+    el.textContent = d.toLocaleString(undefined, {
+      year: 'numeric', month: 'short', day: 'numeric',
+      hour: 'numeric', minute: '2-digit'
+    });
+    el.setAttribute('datetime', raw);
+    if (chip) chip.hidden = false;
+  })();
 
   // Wait for the math-field custom element to be defined before init,
   // otherwise mf.executeCommand and value setter are unavailable.
