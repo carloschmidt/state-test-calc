@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Graphing calculator test runner</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;500;600;700&display=swap" />
+<style>
+  :root {
+    --bg: #FFFFFF;
+    --panel: #F7F8F8;
+    --border: #E3E5E8;
+    --ink: #1D1D1D;
+    --muted: #424147;
+    --blue: #0D64F2;
+    --blue-tint: #E6F0FF;
+    --pass: #138a3d;
+    --pass-bg: #E6F4EA;
+    --fail: #C32113;
+    --fail-bg: #FBE9E7;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--panel); color: var(--ink); font-family: 'Open Sans', sans-serif; }
+  .app { display: grid; grid-template-columns: 420px 1fr; min-height: 100vh; }
+  .controls { background: var(--bg); border-right: 1px solid var(--border); padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+  .controls h1 { font-size: 18px; margin: 0; }
+  iframe.calc { border: 1px solid var(--border); border-radius: 6px; width: 100%; height: 620px; background: #fff; }
+  button.run { background: var(--blue); color: #fff; border: 0; border-radius: 8px; padding: 10px 16px; font: inherit; font-weight: 600; cursor: pointer; transition: all .3s; }
+  button.run:hover { background: #114DBC; }
+  button.run:disabled { opacity: .5; cursor: default; }
+  label { display: flex; align-items: center; gap: 8px; font-size: 14px; cursor: pointer; }
+  .summary { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 12px; font-size: 14px; }
+  .stat { display: flex; justify-content: space-between; padding: 2px 0; }
+  .stat b { font-weight: 600; }
+  .stat.pass b { color: var(--pass); }
+  .stat.fail b { color: var(--fail); }
+  .results { padding: 16px; overflow: auto; }
+  .row { display: grid; grid-template-columns: 160px 1fr 100px 80px; gap: 12px; padding: 8px 10px; font-size: 13px; align-items: center; border-bottom: 1px solid var(--border); border-radius: 6px; }
+  .row.head { font-weight: 600; background: var(--panel); margin-bottom: 8px; position: sticky; top: 0; border: 1px solid var(--border); }
+  .row.pass { background: var(--pass-bg); }
+  .row.fail { background: var(--fail-bg); }
+  .row .status { font-weight: 600; text-align: center; }
+  .row .status.pass { color: var(--pass); }
+  .row .status.fail { color: var(--fail); }
+  .row code { font-family: 'SF Mono', Menlo, monospace; font-size: 12px; word-break: break-all; }
+  .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; background: var(--blue-tint); color: var(--blue); }
+  .empty { color: var(--muted); padding: 40px; text-align: center; }
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="controls">
+    <h1>Graph test runner</h1>
+    <iframe class="calc" id="calc" src="index.html?testharness=1"></iframe>
+    <button class="run" id="run">Run all graph tests</button>
+    <label><input type="checkbox" id="filter-fail" /> Show failures only</label>
+    <div class="summary">
+      <div class="stat"><span>Total</span><b id="total">—</b></div>
+      <div class="stat pass"><span>Passed</span><b id="pass">—</b></div>
+      <div class="stat fail"><span>Failed</span><b id="fail">—</b></div>
+      <div class="stat"><span>Duration</span><b id="dur">—</b></div>
+    </div>
+  </div>
+  <div class="results" id="results">
+    <div class="empty">Click "Run all graph tests" to begin.</div>
+  </div>
+</div>
+
+<script>
+const els = {
+  iframe: document.getElementById('calc'),
+  run: document.getElementById('run'),
+  total: document.getElementById('total'),
+  pass: document.getElementById('pass'),
+  fail: document.getElementById('fail'),
+  dur: document.getElementById('dur'),
+  results: document.getElementById('results'),
+  filterFail: document.getElementById('filter-fail'),
+};
+
+let lastResults = [];
+els.filterFail.addEventListener('change', () => renderResults(lastResults));
+
+async function loadTests() {
+  const r = await fetch('tests-graph.json?cb=' + Date.now(), { cache: 'no-store' });
+  return (await r.json()).tests;
+}
+
+function ctx() {
+  const w = els.iframe.contentWindow;
+  const d = els.iframe.contentDocument || w.document;
+  return { w, d };
+}
+
+async function waitForReady() {
+  return new Promise(resolve => {
+    const tick = () => {
+      const { d, w } = ctx();
+      const gear = d?.getElementById('graph-gear');
+      const mfDefined = w?.customElements?.get('math-field');
+      if (gear && mfDefined && typeof w.functionPlot === 'function') resolve();
+      else setTimeout(tick, 50);
+    };
+    tick();
+  });
+}
+
+async function switchToGraphing() {
+  const { d } = ctx();
+  d.querySelector('.top-tab[data-view="graphing"]').click();
+  await sleep(150);
+}
+
+async function clearAllRows() {
+  const { d } = ctx();
+  // Remove all rows by clicking delete on each
+  let safety = 20;
+  while (d.querySelectorAll('.expr-row').length > 0 && safety-- > 0) {
+    d.querySelector('.expr-delete')?.click();
+    await sleep(15);
+  }
+}
+
+async function addRowWithInput(input) {
+  const { d } = ctx();
+  // Click add expression
+  d.getElementById('add-expr').click();
+  await sleep(40);
+  // Set the math-field's value via the new row
+  const rows = d.querySelectorAll('.expr-row');
+  const mf = rows[rows.length - 1].querySelector('math-field');
+  mf.value = input;
+  // Trigger input listener to re-render
+  mf.dispatchEvent(new Event('input', { bubbles: true }));
+  await sleep(120);  // let function-plot render
+}
+
+function countPlottedCurves() {
+  const { d } = ctx();
+  const lines = d.querySelectorAll('#graph svg path.line').length;
+  // Points (scatter / fnType: points) render as <circle> with class "dot" or no class.
+  // Function-plot also draws one default origin circle, so count circles beyond
+  // the baseline of 1.
+  const circles = d.querySelectorAll('#graph svg g.canvas circle, #graph svg circle.dot').length;
+  // Treat any circle beyond the standard origin marker as a "plot"
+  return lines + (circles > 1 ? 1 : 0);
+}
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+async function runOne(t) {
+  await clearAllRows();
+  await addRowWithInput(t.input);
+  const lines = countPlottedCurves();
+  const plotted = lines > 0;
+  const pass = (plotted === t.expectPlot);
+  return {
+    id: t.id, category: t.category, input: t.input,
+    expect: t.expectPlot ? 'plot' : 'reject',
+    got:    plotted ? 'plot' : 'reject',
+    pass, note: t.note
+  };
+}
+
+function renderResults(rows) {
+  const filterFail = els.filterFail.checked;
+  const visible = filterFail ? rows.filter(r => !r.pass) : rows;
+  if (!visible.length) { els.results.innerHTML = '<div class="empty">No results.</div>'; return; }
+  els.results.innerHTML = [
+    '<div class="row head"><span>Category</span><span>Input</span><span>Expected → Got</span><span>Status</span></div>',
+    ...visible.map(r => `
+      <div class="row ${r.pass ? 'pass' : 'fail'}">
+        <span class="pill">${esc(r.category)}</span>
+        <code title="${esc(r.id)}">${esc(r.input || '<empty>')}</code>
+        <code>${esc(r.expect)} → ${esc(r.got)}</code>
+        <span class="status ${r.pass ? 'pass' : 'fail'}">${r.pass ? 'PASS' : 'FAIL'}</span>
+      </div>`)
+  ].join('');
+}
+function esc(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+async function runAll() {
+  els.run.disabled = true;
+  els.results.innerHTML = '<div class="empty">Running…</div>';
+  const t0 = performance.now();
+  const tests = await loadTests();
+  await waitForReady();
+  await switchToGraphing();
+  const results = [];
+  for (const t of tests) {
+    const r = await runOne(t);
+    results.push(r);
+  }
+  const t1 = performance.now();
+  lastResults = results;
+  const passed = results.filter(r => r.pass).length;
+  els.total.textContent = results.length;
+  els.pass.textContent = passed;
+  els.fail.textContent = results.length - passed;
+  els.dur.textContent = `${((t1 - t0) / 1000).toFixed(2)}s`;
+  renderResults(results);
+  els.run.disabled = false;
+}
+
+els.run.addEventListener('click', runAll);
+</script>
+</body>
+</html>

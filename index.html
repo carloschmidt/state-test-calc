@@ -1,0 +1,3588 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Scientific Calculator</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;500;600;700&display=swap" />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/mathlive@0.109.2/dist/mathlive-static.css" />
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mathlive@0.109.2/mathlive.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mathjs@13.2.0/lib/browser/math.min.js"></script>
+<!-- jStat: probability distributions & inference. MIT. -->
+<script src="https://cdn.jsdelivr.net/npm/jstat@1.9.6/dist/jstat.min.js"></script>
+<!-- function-plot: D3-based plotter that uses math.js for evaluation. UMD bundle includes D3. -->
+<script src="https://cdn.jsdelivr.net/npm/function-plot@1.25.1/dist/function-plot.js"></script>
+<!-- fmin: small numerical optimizer (Nelder-Mead) for nonlinear regression. MIT. -->
+<script src="https://cdn.jsdelivr.net/npm/fmin@0.0.2/build/fmin.min.js"></script>
+<style>
+  :root {
+    /* Formative palette */
+    --bg: #FFFFFF;            /* card / app background */
+    --panel: #F7F8F8;         /* secondary surface (keypad tray) */
+    --border: #E3E5E8;        /* subtle divider */
+    --ink: #1D1D1D;           /* title / strong text */
+    --muted: #424147;         /* body text */
+    --blue: #0D64F2;          /* Core Blue 700 — primary */
+    --blue-hover: #114DBC;    /* primary hover */
+    --blue-pressed: #144494;  /* primary pressed */
+    --blue-tint: #E6F0FF;     /* secondary hover background tint */
+    --blue-soft: #E5EEFE;     /* active-state pill background */
+    --key: #FFFFFF;
+    --key-num: #ECEEF0;       /* slightly darker than secondary surface */
+    --key-hover: #F2F4F6;
+    --key-num-hover: #DDE0E4;
+    /* Formative button universals */
+    --btn-radius: 8px;
+    --btn-transition: all 0.3s;
+    --btn-focus-ring: 0 0 0 2px var(--bg), 0 0 0 4px var(--blue);
+    /* Formative error / warning */
+    --danger-600: #C32113;
+    --danger-700: #A50000;
+    --danger-bg:  #FFE2E2;
+    --warning-600: #BC8100;
+    --warning-700: #996500;
+    --warning-bg:  #FFF8D2;
+  }
+  * { box-sizing: border-box; }
+  /* Visually hidden but available to assistive tech. Standard clip pattern. */
+  .sr-only {
+    position: absolute;
+    width: 1px; height: 1px;
+    padding: 0; margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--panel);
+    font-family: 'Open Sans', sans-serif;
+    color: var(--ink);
+    height: 100%;
+  }
+  /* Top-level view tabs ("Scientific" / "Graphing") */
+  .top-tabs {
+    max-width: 1280px;
+    margin: 16px auto 0;
+    padding: 0 24px;
+    display: flex;
+    gap: 8px;
+    border-bottom: 1px solid var(--border);
+  }
+  .top-tab {
+    cursor: pointer;
+    padding: 12px 20px;
+    font-family: 'Open Sans', sans-serif;
+    font-weight: 600;
+    font-size: 15px;
+    color: var(--muted);
+    background: transparent;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+    transition: var(--btn-transition);
+  }
+  .top-tab:focus-visible {
+    outline: none;
+    box-shadow: var(--btn-focus-ring);
+    border-radius: var(--btn-radius);
+  }
+  .top-tab:hover:not(.active) { color: var(--blue); }
+  .top-tab.active { color: var(--blue); border-bottom-color: var(--blue); }
+
+  /* View containers */
+  .view { display: none; }
+  .view.active { display: block; }
+
+  .app {
+    max-width: 760px;
+    margin: 24px auto;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+    box-shadow: 0 1px 2px rgba(0,0,0,.04);
+  }
+
+  /* --- Graphing view --- */
+  .graph-app {
+    max-width: 1280px;
+    margin: 16px auto;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    box-shadow: 0 1px 2px rgba(0,0,0,.04);
+    display: grid;
+    grid-template-columns: 360px 1fr;
+    grid-template-rows: 1fr auto;
+    grid-template-areas:
+      "sidebar graph"
+      "keypad  keypad";
+    height: calc(100vh - 100px);
+    min-height: 600px;
+  }
+  /* Narrow viewport: stack sidebar above graph */
+  @media (max-width: 900px) {
+    .graph-app {
+      grid-template-columns: 1fr;
+      grid-template-rows: auto 1fr auto;
+      grid-template-areas:
+        "sidebar"
+        "graph"
+        "keypad";
+    }
+    .expr-list { max-height: 200px; border-right: 0; border-bottom: 1px solid var(--border); }
+  }
+  .expr-list {
+    grid-area: sidebar;
+    border-right: 1px solid var(--border);
+    background: var(--bg);
+    overflow-y: auto;
+    padding: 8px;
+  }
+  .expr-list .add-expr {
+    display: block;
+    width: 100%;
+    padding: 10px;
+    border: 1px dashed var(--border);
+    border-radius: 8px;
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+    font-family: 'Open Sans', sans-serif;
+    font-weight: 600;
+    margin-top: 6px;
+    transition: var(--btn-transition);
+  }
+  .expr-list .add-expr:hover { color: var(--blue); border-color: var(--blue); background: var(--blue-tint); }
+  .expr-row {
+    display: grid;
+    grid-template-columns: 32px 1fr 32px;
+    align-items: center;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin-bottom: 6px;
+    transition: var(--btn-transition);
+    background: var(--bg);
+  }
+  .expr-row:focus-within { border-color: var(--blue); box-shadow: 0 0 0 2px var(--blue-tint); }
+  .expr-row .expr-color {
+    width: 28px; height: 28px; border-radius: 6px; margin: 4px;
+    color: #fff; display: flex; align-items: center; justify-content: center;
+    font-size: 14px;
+  }
+  .expr-row .expr-color svg { width: 18px; height: 18px; }
+  .expr-row math-field {
+    border: 0; outline: none; padding: 10px 6px; min-height: 44px;
+    font-size: 18px;
+    background: transparent;
+  }
+  .expr-row math-field::part(virtual-keyboard-toggle),
+  .expr-row math-field::part(menu-toggle) { display: none; }
+  .expr-row .expr-delete {
+    background: transparent; border: 0; cursor: pointer;
+    color: var(--muted); font-size: 18px; line-height: 1;
+    width: 28px; height: 28px; border-radius: 50%;  /* WCAG 2.5.8 */
+    display: flex; align-items: center; justify-content: center;
+    transition: var(--btn-transition);
+  }
+  .expr-row .expr-delete:hover { background: var(--danger-bg); color: var(--danger-700); }
+
+  .expr-row.slider-row {
+    background: #FAFAFB;
+    align-items: center;
+    padding: 6px 10px;
+    gap: 10px;
+  }
+  .slider-row .slider-label {
+    font: 600 13px/1 'Open Sans', sans-serif;
+    min-width: 70px;
+    white-space: nowrap;
+  }
+  .slider-row .slider-val { color: var(--blue); margin-left: 4px; }
+  .slider-row .slider-input { flex: 1; }
+
+  .add-menu { display: flex; flex-direction: column; gap: 4px; padding: 8px 0; }
+  .expr-row.table-row {
+    flex-direction: column;
+    align-items: stretch;
+    padding: 8px;
+    gap: 6px;
+  }
+  .table-row .table-header { display: flex; justify-content: space-between; font: 600 12px/1.2 'Open Sans', sans-serif; align-items: center; gap: 8px; }
+  .table-row .table-header code { font-size: 11px; color: var(--muted); }
+  .table-row table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .table-row table th, .table-row table td { border: 1px solid var(--border); padding: 2px; }
+  .table-row table th { background: var(--panel); font-weight: 600; }
+  .table-row table input {
+    width: 100%; border: none; font: inherit; padding: 4px 6px;
+    outline: none; background: transparent;
+  }
+  .table-row table input:focus { background: var(--blue-tint); }
+  .table-row .table-paste { font-size: 12px; color: var(--blue); cursor: pointer; background: none; border: 0; padding: 0; }
+  .table-row .table-paste:hover { text-decoration: underline; }
+
+  .expr-row.regression-row { align-items: center; }
+  .regression-row .reg-result { font-size: 11px; color: var(--muted); white-space: nowrap; padding: 0 8px; }
+
+  .graph-area {
+    grid-area: graph;
+    position: relative;
+    background: var(--bg);
+    overflow: hidden;
+  }
+  #graph {
+    width: 100%;
+    height: 100%;
+  }
+  #graph svg { display: block; }
+  #graph.hide-x-axis .x.axis { display: none; }
+  #graph.hide-y-axis .y.axis { display: none; }
+  #graph.hide-axis-numbers .x.axis .tick text,
+  #graph.hide-axis-numbers .y.axis .tick text { display: none; }
+
+  /* Gear icon anchored to graph */
+  .graph-gear {
+    position: absolute;
+    top: 10px; right: 10px;
+    width: 36px; height: 36px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 50%;
+    cursor: pointer;
+    color: var(--muted);
+    display: inline-flex; align-items: center; justify-content: center;
+    transition: var(--btn-transition);
+    z-index: 10;
+  }
+  .graph-gear:hover { background: var(--blue-tint); color: var(--blue); border-color: var(--blue); }
+  .graph-gear svg { width: 20px; height: 20px; }
+
+  /* Settings panel */
+  .graph-settings {
+    position: absolute;
+    top: 56px; right: 10px;
+    width: 320px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 4px 16px rgba(0,0,0,.08);
+    padding: 12px 14px;
+    z-index: 20;
+    display: none;
+    font-family: 'Open Sans', sans-serif;
+    font-size: 14px;
+  }
+  .graph-settings.open { display: block; }
+  .graph-settings hr { border: 0; border-top: 1px solid var(--border); margin: 10px 0; }
+  .gs-row {
+    display: flex; align-items: center; gap: 10px;
+    margin: 8px 0;
+  }
+  .gs-row label { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
+  .gs-row input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--blue); cursor: pointer; }
+  /* Tiny mini-buttons used for visual sub-options (e.g. cartesian/polar grid) */
+  .gs-mini {
+    width: 32px; height: 32px; border-radius: 50%;
+    border: 1px solid var(--border); background: var(--panel);
+    display: inline-flex; align-items: center; justify-content: center;
+    cursor: pointer; color: var(--muted);
+    transition: var(--btn-transition);
+  }
+  .gs-mini.active { background: var(--blue-tint); border-color: var(--blue); color: var(--blue); }
+  .gs-mini.gs-mini-disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+    color: var(--muted);
+  }
+  .gs-mini.gs-mini-disabled:hover { background: var(--panel); color: var(--muted); }
+  .gs-mini svg { width: 18px; height: 18px; }
+
+  /* Axis range row */
+  .gs-axis-range {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    align-items: center;
+    gap: 6px;
+    font-family: 'KaTeX_Main', 'Open Sans', serif;
+    font-size: 14px;
+  }
+  .gs-axis-range input {
+    width: 100%;
+    padding: 4px 6px;
+    border: 0;
+    border-bottom: 1px solid var(--ink);
+    font: inherit;
+    background: transparent;
+    text-align: center;
+  }
+  .gs-axis-range input:focus { outline: none; border-bottom-color: var(--blue); }
+  .gs-label-input {
+    flex: 1;
+    padding: 6px 8px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font: inherit;
+    font-family: 'Open Sans', sans-serif;
+    background: var(--bg);
+  }
+  .gs-label-input:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 2px var(--blue-tint); }
+  .gs-label-wrap {
+    flex: 1;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 4px 8px;
+    position: relative;
+  }
+  .gs-label-wrap .lbl {
+    position: absolute;
+    top: -8px; left: 8px; padding: 0 4px;
+    background: var(--bg);
+    font-size: 11px; color: var(--muted);
+  }
+  .gs-label-wrap input { border: 0; outline: none; width: 100%; font: inherit; background: transparent; padding: 2px 0; }
+  .gs-step { display: inline-flex; align-items: center; gap: 4px; }
+  .gs-step input { width: 50px; }
+
+  /* Radians/Degrees pill (visual stub — function-plot is unitless) */
+  .gs-angle-toggle {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    border: 1px solid var(--ink);
+    border-radius: 8px;
+    overflow: hidden;
+    margin-top: 4px;
+  }
+  .gs-angle-toggle button {
+    border: 0; padding: 8px;
+    font: inherit; font-weight: 600;
+    background: var(--bg); color: var(--ink);
+    cursor: pointer;
+  }
+  .gs-angle-toggle button.active { background: var(--ink); color: var(--bg); }
+
+  .gs-more {
+    display: inline-flex; align-items: center; gap: 4px;
+    cursor: pointer; color: var(--ink);
+    user-select: none;
+  }
+  .gs-more::before {
+    content: '▶'; font-size: 10px;
+    display: inline-block;
+    transition: transform .2s;
+  }
+  .gs-more.open::before { transform: rotate(90deg); }
+
+  /* f(x) function library panel — slides up from the keypad */
+  .fn-panel {
+    position: absolute;
+    left: 360px;          /* sits to the right of the sidebar */
+    right: 0;
+    bottom: 0;            /* sits flush above the keypad — set dynamically */
+    max-height: 480px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-bottom: 0;
+    border-radius: 8px 8px 0 0;
+    box-shadow: 0 -4px 16px rgba(0,0,0,.08);
+    z-index: 30;
+    display: none;
+    flex-direction: column;
+    font-family: 'Open Sans', sans-serif;
+  }
+  .fn-panel.open { display: flex; }
+  @media (max-width: 900px) {
+    .fn-panel { left: 0; }
+  }
+  .fn-panel-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    font-size: 15px;
+    color: var(--ink);
+  }
+  .fn-panel-close {
+    background: transparent; border: 0; font-size: 22px; line-height: 1;
+    width: 28px; height: 28px; border-radius: 50%;
+    cursor: pointer; color: var(--muted);
+    transition: var(--btn-transition);
+  }
+  .fn-panel-close:hover { background: var(--blue-tint); color: var(--blue); }
+  .fn-panel-body {
+    overflow-y: auto;
+    padding: 12px 16px 16px;
+    flex: 1;
+  }
+  .fn-section { margin-bottom: 18px; }
+  .fn-section h4 {
+    margin: 0 0 8px;
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--muted);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .fn-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+  }
+  .fn-btn {
+    position: relative;
+    background: var(--key-num);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    height: 44px;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--ink);
+    transition: var(--btn-transition);
+    font-family: 'Open Sans', sans-serif;
+    padding: 0 8px;
+  }
+  .fn-btn:hover:not(.unwired) { background: var(--key-num-hover); border-color: var(--blue); }
+  .fn-btn .katex { font-size: 1em; }
+  /* Unwired = not yet implemented — visible in the UI but inactive */
+  .fn-btn.unwired {
+    color: #6E6E73;
+    background: var(--key-num);
+    cursor: not-allowed;
+  }
+  .fn-btn.unwired:hover {
+    background: var(--key-num);
+    border-color: var(--border);
+  }
+  .fn-badge {
+    position: absolute;
+    top: -6px;
+    right: 6px;
+    font-family: 'Open Sans', sans-serif;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--warning-700);
+    background: var(--warning-bg);
+    border: 1px solid var(--warning-600);
+    border-radius: 999px;
+    padding: 1px 6px;
+    line-height: 1;
+    pointer-events: none;
+  }
+
+  /* Graphing keypad — 10-col horizontal layout */
+  .graph-keypad {
+    grid-area: keypad;
+    border-top: 1px solid var(--border);
+    background: var(--panel);
+    padding: 0 12px 10px;
+    display: grid;
+    grid-template-columns: repeat(10, 1fr);
+    gap: 6px;
+  }
+  .graph-keypad .keypad-toggle { grid-column: 1 / -1; }
+  /* Alphabet keypad: 20-col grid (every key spans 2 cols), like scientific abc */
+  .graph-alpha-rows {
+    grid-column: 1 / -1;
+    display: none;
+    grid-template-columns: repeat(20, 1fr);
+    gap: 6px;
+  }
+  .graph-alpha-rows .key { grid-column: span 2; }
+  .graph-alpha-rows .graph-alpha-offset { grid-column: 2 / span 2; }
+  .graph-alpha-rows .key.wide { grid-column: span 2; }
+  /* Mode swap: hide the active set */
+  .graph-keypad[data-mode="alpha"] > :not(.keypad-toggle):not(.graph-alpha-rows) { display: none; }
+  .graph-keypad[data-mode="alpha"] .graph-alpha-rows { display: grid; }
+  .graph-keypad .key {
+    background: var(--key);
+    border: 1px solid var(--border);
+    border-radius: var(--btn-radius);
+    height: 44px;
+    font-family: 'Open Sans', sans-serif;
+    font-weight: 600;
+    font-size: 16px;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    user-select: none;
+    transition: var(--btn-transition);
+    color: var(--ink);
+    padding: 0;
+    gap: 8px;
+  }
+  .graph-keypad .key:hover { background: var(--key-hover); }
+  .graph-keypad .key.num  { background: var(--key-num); }
+  .graph-keypad .key.num:hover { background: var(--key-num-hover); }
+  .graph-keypad .key.wide { grid-column: span 2; }
+  .graph-keypad .key.enter { grid-column: span 2; background: var(--blue); color: #fff; border-color: var(--blue); }
+  .graph-keypad .key.enter:hover { background: var(--blue-hover); border-color: var(--blue-hover); }
+  .graph-keypad .key svg { width: 18px; height: 18px; }
+  .history {
+    min-height: 240px;
+    max-height: 360px;
+    overflow-y: auto;
+    background: #fff;
+  }
+  .history .row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 16px 24px;
+    border-top: 1px solid var(--border);
+    font-size: 18px;
+    min-height: 64px;
+  }
+  .history .blank-row {
+    min-height: 120px;
+    border-top: none;
+  }
+  .history .expr { flex: 1; }
+  .history .res {
+    display: flex; align-items: center; gap: 12px;
+    color: var(--ink);
+  }
+  .frac-toggle {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 36px; height: 36px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--btn-radius);
+    color: var(--muted);
+    cursor: pointer;
+    padding: 0;
+    font: 600 12px/1 'Open Sans', sans-serif;
+    transition: var(--btn-transition);
+    margin-left: 4px;
+    flex-shrink: 0;
+  }
+  .frac-toggle:hover { background: var(--blue-tint); color: var(--blue); border-color: var(--blue); }
+  .frac-toggle:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+  .frac-toggle svg { width: 20px; height: 20px; }
+  .frac-toggle[hidden] { display: none; }
+  /* Status chips for error / warning results */
+  .status-chip {
+    display: inline-flex; align-items: center; gap: 8px;
+    border: 1px solid;
+    border-radius: 8px;
+    padding: 6px 12px;
+    font-family: 'Open Sans', sans-serif;
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1.2;
+    min-height: 32px;
+    box-sizing: border-box;
+  }
+  .status-chip svg { width: 18px; height: 18px; flex-shrink: 0; }
+  .status-chip.error {
+    color: var(--danger-700);
+    border-color: var(--danger-600);
+    background: var(--danger-bg);
+  }
+  .status-chip.error svg { fill: var(--danger-600); }
+  .status-chip.warning {
+    color: var(--warning-700);
+    border-color: var(--warning-600);
+    background: var(--warning-bg);
+  }
+  .status-chip.warning svg { fill: var(--warning-600); }
+  .input-wrap {
+    border-top: 1px solid var(--border);
+    padding: 12px 14px;
+    background: #fff;
+    position: relative;
+  }
+  .input-frac-toggle {
+    position: absolute;
+    right: 22px;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 2;
+  }
+  math-field {
+    display: block;
+    width: 100%;
+    min-height: 52px;
+    font-size: 24px;
+    border: 2px solid var(--blue);
+    border-radius: 4px;
+    padding: 10px 14px;
+    background: #fff;
+    outline: none;
+    --caret-color: var(--blue);
+  }
+  math-field::part(virtual-keyboard-toggle),
+  math-field::part(menu-toggle) { display: none; }
+  .keypad {
+    background: var(--panel);
+    padding: 10px 12px 14px;
+    border-top: 1px solid var(--border);
+    position: relative;
+  }
+
+  /* Collapse handle — sits at the top of the keypad as a thin bar */
+  .keypad-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    min-height: 28px;          /* WCAG 2.5.8: target ≥ 24×24 CSS px */
+    padding: 3px 0;
+    background: transparent;
+    border: 0;
+    cursor: pointer;
+    color: var(--muted);
+    transition: var(--btn-transition);
+    border-radius: 0 0 8px 8px;
+  }
+  .keypad-toggle:hover { color: var(--blue); background: var(--key-hover); }
+  .keypad-toggle svg {
+    width: 22px; height: 22px;
+    transition: transform 0.3s;
+  }
+  /* When collapsed, point arrow upward and hide everything inside the
+     keypad except the toggle itself. */
+  .keypad.collapsed > :not(.keypad-toggle),
+  .graph-keypad.collapsed > :not(.keypad-toggle) { display: none; }
+  .keypad.collapsed .keypad-toggle svg,
+  .graph-keypad.collapsed .keypad-toggle svg { transform: rotate(180deg); }
+  .keypad.collapsed { padding-bottom: 0; }
+  .graph-keypad.collapsed { padding: 0 12px; }
+  .toprow {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 6px 4px 12px;
+    font-size: 15px;
+    color: var(--muted);
+  }
+  .tabs { display: flex; gap: 22px; }
+  .tab {
+    cursor: pointer;
+    padding: 4px 6px;
+    background: transparent;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    color: var(--muted);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 32px;
+    height: 28px;
+    font: inherit;
+    transition: var(--btn-transition);
+  }
+  .tab:focus-visible {
+    outline: none;
+    box-shadow: var(--btn-focus-ring);
+    border-radius: var(--btn-radius);
+  }
+  .tab:hover:not(.active) { color: var(--blue); }
+  .tab svg { width: 20px; height: 20px; }
+  .tab.tab-func { font-size: 16px; line-height: 1; }
+  .tab.tab-func .katex { font-size: 1em; }
+  .tab.active { color: var(--blue); border-bottom-color: var(--blue); font-weight: 600; }
+  .angle {
+    display: inline-flex;
+    flex-shrink: 0;
+    border: 1px solid var(--border);
+    border-radius: var(--btn-radius);
+    overflow: hidden;
+    background: #fff;
+  }
+  .angle button {
+    border: 0;
+    padding: 4px 12px;
+    background: #fff;
+    color: var(--muted);
+    cursor: pointer;
+    font: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    transition: var(--btn-transition);
+  }
+  .angle button:hover:not(.active) { background: var(--blue-tint); color: var(--blue); }
+  .angle button.active { background: var(--blue-soft); color: var(--blue); }
+  .icon-btn {
+    background: transparent; border: 0; cursor: pointer;
+    color: var(--muted); padding: 6px;
+    border-radius: var(--btn-radius);
+    display: inline-flex; align-items: center; justify-content: center;
+    transition: var(--btn-transition);
+  }
+  .icon-btn:disabled { opacity: .35; cursor: default; }
+  .icon-btn:hover:not(:disabled) { background: var(--blue-tint); color: var(--blue); }
+  .icon-btn svg { width: 22px; height: 22px; }
+  .spacer { flex: 1; }
+  /* Tertiary button — clear all */
+  .clear-all {
+    cursor: pointer; color: var(--blue); font-size: 14px;
+    font-weight: 600;
+    white-space: nowrap;
+    padding: 4px 8px;
+    background: transparent;
+    border: 0;
+    border-radius: var(--btn-radius);
+    font-family: 'Open Sans', sans-serif;
+    transition: var(--btn-transition);
+  }
+  .clear-all:hover { background: var(--blue-tint); }
+  .clear-all:focus-visible {
+    outline: none;
+    box-shadow: var(--btn-focus-ring);
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(9, 1fr);
+    gap: 6px;
+  }
+  .key {
+    background: var(--key);
+    border: 1px solid var(--border);
+    border-radius: var(--btn-radius);
+    height: 48px;
+    min-height: 32px;        /* Formative min touch target */
+    padding: 0 16px;          /* Formative horizontal padding */
+    font-size: 17px;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    gap: 8px;                 /* Formative icon ↔ text gap */
+    user-select: none;
+    transition: var(--btn-transition);
+    color: var(--ink);
+    font-family: 'Open Sans', sans-serif;
+    font-weight: 600;         /* Formative Semibold */
+  }
+  .key:hover { background: var(--key-hover); }
+  .key:active { background: var(--key-num-hover); }
+  .key:focus-visible { outline: none; box-shadow: var(--btn-focus-ring); }
+  .key.is-disabled {
+    color: #6E6E73;            /* 5.96:1 on white, meets AA 4.5:1 even though disabled is exempt */
+    background: var(--key-num);
+    border-color: var(--border);
+    cursor: not-allowed;
+    pointer-events: none;
+  }
+  .key.num { background: var(--key-num); }
+  .key.num:hover { background: var(--key-num-hover); }
+  /* Primary CTA — Enter */
+  .key.enter {
+    background: var(--blue);
+    color: #fff;
+    border-color: var(--blue);
+    grid-column: span 2;
+  }
+  .key.enter:hover  { background: var(--blue-hover);   border-color: var(--blue-hover); }
+  .key.enter:active { background: var(--blue-pressed); border-color: var(--blue-pressed); }
+  .key.wide { grid-column: span 2; }
+  .key svg { width: 18px; height: 18px; }
+  .key .katex { font-size: 1em; }
+  .panel { display: none; }
+  .panel.active { display: grid; }
+  /* abc keyboard: 20-col grid so row 2 can offset by 1 col (half a key) */
+  .panel[data-panel="abc"] { grid-template-columns: repeat(20, 1fr); }
+  .panel[data-panel="abc"] .key { grid-column: span 2; }
+  .panel[data-panel="abc"] .row2-offset { grid-column: 2 / span 2; }
+  .panel[data-panel="abc"] #abc-shift { grid-column: span 3; }
+  .panel[data-panel="abc"] .key.enter { grid-column: span 3; }
+  .panel[data-panel="abc"] .abc-letter { font-style: normal; }
+  .panel[data-panel="abc"].shift-on .abc-letter { text-transform: uppercase; }
+  .panel[data-panel="abc"].shift-on #abc-shift { background: var(--blue-soft); color: var(--blue); }
+  /* func keyboard: 7 cols with col 4 acting as a gap */
+  .panel[data-panel="func"] { grid-template-columns: repeat(7, 1fr); }
+  .panel[data-panel="func"] .gap { background: transparent; border: 0; pointer-events: none; }
+  .panel[data-panel="func"] .key.enter { grid-column: span 1; }
+  .small-note {
+    font-size: 14px; color: var(--muted); text-align: center; padding: 20px;
+  }
+
+  /* Global focus indicator — applies to interactive controls that lack a
+     more specific :focus-visible rule. Uses --btn-focus-ring (2px white ring
+     + 2px blue) which yields ~5.4:1 contrast against the white surface, well
+     above WCAG 1.4.11's 3:1 minimum for non-text contrast. */
+  .gs-mini:focus-visible,
+  .icon-btn:focus-visible,
+  .fn-panel-close:focus-visible,
+  .expr-delete:focus-visible,
+  .add-expr:focus-visible,
+  .keypad-toggle:focus-visible,
+  .graph-gear:focus-visible,
+  .fn-btn:focus-visible,
+  .angle button:focus-visible,
+  .gs-angle-toggle button:focus-visible {
+    outline: none;
+    box-shadow: var(--btn-focus-ring);
+  }
+</style>
+</head>
+<body>
+<h1 class="sr-only">Scientific and Graphing Calculator</h1>
+<header class="top-tabs" role="tablist" aria-label="Calculator mode">
+  <button type="button" class="top-tab active" role="tab" aria-selected="true" aria-controls="view-scientific" data-view="scientific">Scientific</button>
+  <button type="button" class="top-tab" role="tab" aria-selected="false" aria-controls="view-graphing" data-view="graphing">Graphing</button>
+</header>
+
+<div id="view-scientific" class="view active" role="tabpanel" aria-label="Scientific calculator">
+<div class="app">
+  <section class="history" id="history" aria-label="Calculation history" aria-live="polite" aria-atomic="false" aria-relevant="additions"></section>
+
+  <div class="input-wrap">
+    <math-field id="mf"></math-field>
+    <button type="button" id="input-frac-toggle" class="frac-toggle input-frac-toggle" hidden aria-label="Convert to fraction" title="Convert to fraction"></button>
+  </div>
+
+  <div class="keypad">
+    <div class="toprow">
+      <div class="tabs" role="tablist" aria-label="Keypad">
+        <button type="button" class="tab active" role="tab" aria-selected="true" aria-controls="panel-main" data-tab="main" title="Home" aria-label="Home">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12l9-9 9 9"/><path d="M5 10v10a1 1 0 0 0 1 1h3v-6h6v6h3a1 1 0 0 0 1-1V10"/></svg>
+        </button>
+        <button type="button" class="tab" role="tab" aria-selected="false" aria-controls="panel-abc" data-tab="abc" title="Letters" aria-label="Letter keyboard">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="2"/><line x1="6" y1="10" x2="6" y2="10"/><line x1="10" y1="10" x2="10" y2="10"/><line x1="14" y1="10" x2="14" y2="10"/><line x1="18" y1="10" x2="18" y2="10"/><line x1="6" y1="14" x2="6" y2="14"/><line x1="18" y1="14" x2="18" y2="14"/><line x1="9" y1="14" x2="15" y2="14"/></svg>
+        </button>
+        <button type="button" class="tab tab-func" role="tab" aria-selected="false" aria-controls="panel-func" data-tab="func" title="Functions" aria-label="Functions" data-label-tex="f(x)"></button>
+      </div>
+      <div class="angle" role="group" aria-label="Angle units">
+        <button type="button" data-angle="rad" aria-pressed="false">RAD</button>
+        <button type="button" data-angle="deg" class="active" aria-pressed="true">DEG</button>
+      </div>
+      <button class="icon-btn" id="undo" title="Undo">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14l-4-4 4-4"/><path d="M5 10h9a5 5 0 0 1 0 10h-2"/></svg>
+      </button>
+      <button class="icon-btn" id="redo" title="Redo" disabled>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 14l4-4-4-4"/><path d="M19 10h-9a5 5 0 0 0 0 10h2"/></svg>
+      </button>
+      <button type="button" class="clear-all" id="clear-all">clear all</button>
+      <div class="spacer"></div>
+    </div>
+
+    <!-- main panel: 9-column grid -->
+    <div class="panel active grid" id="panel-main" role="tabpanel" aria-label="Main keypad" data-panel="main">
+      <button class="key" data-latex="^{2}" data-latex-tex="a^2" data-needs-operand></button>
+      <button class="key" data-latex="^{#?}" data-latex-tex="a^b" data-needs-operand></button>
+      <button class="key" data-cmd="abs" data-latex-tex="|a|"></button>
+      <button class="key num" data-insert="7">7</button>
+      <button class="key num" data-insert="8">8</button>
+      <button class="key num" data-insert="9">9</button>
+      <button class="key" data-insert="\div" data-latex-tex="\div"></button>
+      <button class="key" data-insert="\%" data-latex-tex="\%"></button>
+      <button class="key" data-cmd="frac" data-latex-tex="\frac{a}{b}"></button>
+
+      <button class="key" data-cmd="sqrt" data-latex-tex="\sqrt{\phantom{x}}"></button>
+      <button class="key" data-cmd="nthroot" data-latex-tex="\sqrt[n]{\phantom{x}}"></button>
+      <button class="key" data-insert="\pi" data-latex-tex="\pi"></button>
+      <button class="key num" data-insert="4">4</button>
+      <button class="key num" data-insert="5">5</button>
+      <button class="key num" data-insert="6">6</button>
+      <button class="key" data-insert="\times" data-latex-tex="\times"></button>
+      <button class="key" data-cmd="left" title="Move left">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+      </button>
+      <button class="key" data-cmd="right" title="Move right">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+      </button>
+
+      <button class="key" data-fn="sin">sin</button>
+      <button class="key" data-fn="cos">cos</button>
+      <button class="key" data-fn="tan">tan</button>
+      <button class="key num" data-insert="1">1</button>
+      <button class="key num" data-insert="2">2</button>
+      <button class="key num" data-insert="3">3</button>
+      <button class="key" data-insert="-" data-latex-tex="-"></button>
+      <button class="key wide" data-cmd="backspace" title="Backspace">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 5H8l-7 7 7 7h13a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2z"/><line x1="18" y1="9" x2="12" y2="15"/><line x1="12" y1="9" x2="18" y2="15"/></svg>
+      </button>
+
+      <button class="key" data-insert="(">(</button>
+      <button class="key" data-insert=")">)</button>
+      <button class="key" data-insert=",">,</button>
+      <button class="key num" data-insert="0">0</button>
+      <button class="key num" data-insert=".">.</button>
+      <button class="key" data-cmd="ans">ans</button>
+      <button class="key" data-insert="+" data-latex-tex="+"></button>
+      <button class="key enter" data-cmd="enter" title="Enter">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 10 4 15 9 20"/><path d="M20 4v7a4 4 0 0 1-4 4H4"/></svg>
+      </button>
+    </div>
+
+    <!-- abc panel: QWERTY -->
+    <div class="panel" id="panel-abc" role="tabpanel" aria-label="Letter keypad" data-panel="abc">
+      <!-- Row 1: q w e r t y u i o p (10 keys) -->
+      <button class="key abc-letter" data-letter="q">q</button>
+      <button class="key abc-letter" data-letter="w">w</button>
+      <button class="key abc-letter" data-letter="e">e</button>
+      <button class="key abc-letter" data-letter="r">r</button>
+      <button class="key abc-letter" data-letter="t">t</button>
+      <button class="key abc-letter" data-letter="y">y</button>
+      <button class="key abc-letter" data-letter="u">u</button>
+      <button class="key abc-letter" data-letter="i">i</button>
+      <button class="key abc-letter" data-letter="o">o</button>
+      <button class="key abc-letter" data-letter="p">p</button>
+      <!-- Row 2: a s d f g h j k l (9 keys, half-offset) -->
+      <button class="key abc-letter row2-offset" data-letter="a">a</button>
+      <button class="key abc-letter" data-letter="s">s</button>
+      <button class="key abc-letter" data-letter="d">d</button>
+      <button class="key abc-letter" data-letter="f">f</button>
+      <button class="key abc-letter" data-letter="g">g</button>
+      <button class="key abc-letter" data-letter="h">h</button>
+      <button class="key abc-letter" data-letter="j">j</button>
+      <button class="key abc-letter" data-letter="k">k</button>
+      <button class="key abc-letter" data-letter="l">l</button>
+      <!-- Row 3: = z x c v b n m , ⌫ (10 keys) -->
+      <button class="key num" data-insert="=">=</button>
+      <button class="key abc-letter" data-letter="z">z</button>
+      <button class="key abc-letter" data-letter="x">x</button>
+      <button class="key abc-letter" data-letter="c">c</button>
+      <button class="key abc-letter" data-letter="v">v</button>
+      <button class="key abc-letter" data-letter="b">b</button>
+      <button class="key abc-letter" data-letter="n">n</button>
+      <button class="key abc-letter" data-letter="m">m</button>
+      <button class="key" data-insert=",">,</button>
+      <button class="key num" data-cmd="backspace" title="Backspace">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 5H8l-7 7 7 7h13a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2z"/><line x1="18" y1="9" x2="12" y2="15"/><line x1="12" y1="9" x2="18" y2="15"/></svg>
+      </button>
+      <!-- Row 4: ↑ ( ) [ ] ! ' π ⏎ (9 keys, ⏎ is the blue Enter spanning 2) -->
+      <button class="key num" data-cmd="shift" id="abc-shift" title="Shift" aria-label="Shift" aria-pressed="false">
+        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 4l8 8h-5v8h-6v-8H4z"/></svg>
+      </button>
+      <button class="key" data-insert="(">(</button>
+      <button class="key" data-insert=")">)</button>
+      <button class="key" data-insert="[">[</button>
+      <button class="key" data-insert="]">]</button>
+      <button class="key" data-insert="!" data-needs-operand>!</button>
+      <button class="key" data-insert="\prime">'</button>
+      <button class="key" data-insert="\pi" data-latex-tex="\pi"></button>
+      <button class="key enter" data-cmd="enter" title="Enter">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 10 4 15 9 20"/><path d="M20 4v7a4 4 0 0 1-4 4H4"/></svg>
+      </button>
+    </div>
+
+    <!-- func panel: 7-col grid, col 4 is a visual gap -->
+    <div class="panel" id="panel-func" role="tabpanel" aria-label="Function keypad" data-panel="func">
+      <!-- Row 1 -->
+      <button class="key" data-fn="sin">sin</button>
+      <button class="key" data-fn="cos">cos</button>
+      <button class="key" data-fn="tan">tan</button>
+      <div class="gap"></div>
+      <button class="key" data-latex="^{#?}" data-latex-tex="a^b" data-needs-operand></button>
+      <button class="key" data-cmd="sqrt" data-latex-tex="\sqrt{\phantom{x}}"></button>
+      <button class="key" data-cmd="nthroot" data-latex-tex="\sqrt[n]{\phantom{x}}"></button>
+      <!-- Row 2 -->
+      <button class="key" data-fn="arcsin" data-label-tex="\sin^{-1}"></button>
+      <button class="key" data-fn="arccos" data-label-tex="\cos^{-1}"></button>
+      <button class="key" data-fn="arctan" data-label-tex="\tan^{-1}"></button>
+      <div class="gap"></div>
+      <button class="key" data-cmd="exp" data-latex-tex="e^x"></button>
+      <button class="key" data-fn="abs">abs</button>
+      <button class="key" data-fn="round">round</button>
+      <!-- Row 3 -->
+      <button class="key" data-fn="mean">mean</button>
+      <button class="key" data-fn="stdev">stdev</button>
+      <button class="key" data-fn="stdevp">stdevp</button>
+      <div class="gap"></div>
+      <button class="key" data-fn="ln">ln</button>
+      <button class="key" data-fn="log">log</button>
+      <button class="key num" data-cmd="backspace" title="Backspace">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 5H8l-7 7 7 7h13a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2z"/><line x1="18" y1="9" x2="12" y2="15"/><line x1="12" y1="9" x2="18" y2="15"/></svg>
+      </button>
+      <!-- Row 4 -->
+      <button class="key" data-fn="nPr">nPr</button>
+      <button class="key" data-fn="nCr">nCr</button>
+      <button class="key" data-insert="!" data-needs-operand>!</button>
+      <div class="gap"></div>
+      <button class="key" data-insert="e">e</button>
+      <button class="key" data-insert="\pi" data-latex-tex="\pi"></button>
+      <button class="key enter" data-cmd="enter" title="Enter">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 10 4 15 9 20"/><path d="M20 4v7a4 4 0 0 1-4 4H4"/></svg>
+      </button>
+    </div>
+  </div>
+</div>
+</div><!-- /#view-scientific -->
+
+<div id="view-graphing" class="view" role="tabpanel" aria-label="Graphing calculator">
+  <div class="graph-app">
+    <aside class="expr-list">
+      <div id="expr-rows"></div>
+      <div class="add-menu">
+        <button class="add-expr" id="add-expr">+ Add expression</button>
+        <!-- <button class="add-expr" id="add-table">+ Table</button> -->
+        <!-- <button class="add-expr" id="add-regression">+ Regression</button> -->
+      </div>
+    </aside>
+    <main class="graph-area" aria-label="Graph">
+      <figure aria-labelledby="graph-caption" style="margin:0;height:100%">
+        <figcaption id="graph-caption" class="sr-only">Empty graph.</figcaption>
+        <div id="graph" role="img" aria-labelledby="graph-caption"></div>
+        <details class="sr-only">
+          <summary>Data table for graphed functions</summary>
+          <div id="graph-data-table"></div>
+        </details>
+      </figure>
+      <button class="graph-gear" id="graph-gear" aria-label="Graph settings" aria-haspopup="dialog" aria-expanded="false">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      </button>
+      <div class="graph-settings" id="graph-settings" role="dialog" aria-label="Graph settings">
+        <!-- Grid + axis number toggles -->
+        <div class="gs-row" style="justify-content:space-between">
+          <label><input type="checkbox" id="gs-grid" checked /> Grid</label>
+          <label><input type="checkbox" id="gs-axis-numbers" checked /> Axis Numbers</label>
+        </div>
+        <div class="gs-row" style="margin-left:24px;gap:8px" role="group" aria-label="Grid style">
+          <button type="button" class="gs-mini active" id="gs-grid-cart" title="Cartesian grid" aria-label="Cartesian grid" aria-pressed="true">
+            <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.2" aria-hidden="true"><rect x="2" y="2" width="14" height="14"/><line x1="6" y1="2" x2="6" y2="16"/><line x1="10" y1="2" x2="10" y2="16"/><line x1="2" y1="6" x2="16" y2="6"/><line x1="2" y1="10" x2="16" y2="10"/></svg>
+          </button>
+          <button type="button" class="gs-mini gs-mini-disabled" id="gs-grid-polar" title="Polar grid — not yet implemented" aria-label="Polar grid (coming soon)" aria-disabled="true">
+            <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.2" aria-hidden="true"><circle cx="9" cy="9" r="6"/><circle cx="9" cy="9" r="3"/><line x1="3" y1="9" x2="15" y2="9"/><line x1="9" y1="3" x2="9" y2="15"/></svg>
+          </button>
+          <label style="margin-left:auto"><input type="checkbox" id="gs-minor" /> Minor Gridlines</label>
+        </div>
+        <div class="gs-row"><label><input type="checkbox" id="gs-arrows" data-stub /> Arrows</label></div>
+        <hr/>
+
+        <!-- X-axis -->
+        <div class="gs-row" style="align-items:flex-start">
+          <label style="flex:0 0 80px"><input type="checkbox" id="gs-xaxis" checked /> X-Axis</label>
+          <div class="gs-label-wrap"><label class="lbl" for="gs-xlabel">Label</label><input type="text" id="gs-xlabel" placeholder='e.g. "x"' /></div>
+        </div>
+        <div class="gs-row" style="margin-left:24px">
+          <div class="gs-axis-range" style="flex:1">
+            <label class="sr-only" for="gs-xmin">X-axis minimum</label>
+            <input type="number" id="gs-xmin" value="-10" />
+            <span aria-hidden="true">≤ x ≤</span>
+            <label class="sr-only" for="gs-xmax">X-axis maximum</label>
+            <input type="number" id="gs-xmax" value="10" />
+          </div>
+          <div class="gs-step"><label for="gs-xstep">Step:</label> <input type="number" id="gs-xstep" placeholder="auto" /></div>
+        </div>
+
+        <!-- Y-axis -->
+        <div class="gs-row" style="align-items:flex-start;margin-top:8px">
+          <label style="flex:0 0 80px"><input type="checkbox" id="gs-yaxis" checked /> Y-Axis</label>
+          <div class="gs-label-wrap"><label class="lbl" for="gs-ylabel">Label</label><input type="text" id="gs-ylabel" placeholder='e.g. "y"' /></div>
+        </div>
+        <div class="gs-row" style="margin-left:24px">
+          <div class="gs-axis-range" style="flex:1">
+            <label class="sr-only" for="gs-ymin">Y-axis minimum</label>
+            <input type="number" id="gs-ymin" value="-8" />
+            <span aria-hidden="true">≤ y ≤</span>
+            <label class="sr-only" for="gs-ymax">Y-axis maximum</label>
+            <input type="number" id="gs-ymax" value="8" />
+          </div>
+          <div class="gs-step"><label for="gs-ystep">Step:</label> <input type="number" id="gs-ystep" placeholder="auto" /></div>
+        </div>
+        <hr/>
+        <div class="gs-angle-toggle" role="group" aria-label="Angle units for graph">
+          <button type="button" data-angle="radians" class="active" aria-pressed="true">Radians</button>
+          <button type="button" data-angle="degrees" aria-pressed="false">Degrees</button>
+        </div>
+      </div>
+    </main>
+    <!-- f(x) function library panel (initially hidden) -->
+    <div class="fn-panel" id="fn-panel" role="dialog" aria-label="Function library" aria-hidden="true">
+      <div class="fn-panel-header">
+        <strong>Functions</strong>
+        <button class="fn-panel-close" id="fn-panel-close" aria-label="Close">×</button>
+      </div>
+      <div class="fn-panel-body" id="fn-panel-body"></div>
+    </div>
+
+    <div class="graph-keypad" data-mode="numeric">
+      <button class="keypad-toggle graph-keypad-toggle" type="button" aria-label="Collapse keypad" aria-expanded="true" title="Collapse keypad">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
+      <!-- Alphabet keypad — shown when ABC mode is active -->
+      <div class="graph-alpha-rows">
+        <button class="key abc-letter" data-letter="q">q</button>
+        <button class="key abc-letter" data-letter="w">w</button>
+        <button class="key abc-letter" data-letter="e">e</button>
+        <button class="key abc-letter" data-letter="r">r</button>
+        <button class="key abc-letter" data-letter="t">t</button>
+        <button class="key abc-letter" data-letter="y">y</button>
+        <button class="key abc-letter" data-letter="u">u</button>
+        <button class="key abc-letter" data-letter="i">i</button>
+        <button class="key abc-letter" data-letter="o">o</button>
+        <button class="key abc-letter" data-letter="p">p</button>
+
+        <button class="key abc-letter graph-alpha-offset" data-letter="a">a</button>
+        <button class="key abc-letter" data-letter="s">s</button>
+        <button class="key abc-letter" data-letter="d">d</button>
+        <button class="key abc-letter" data-letter="f">f</button>
+        <button class="key abc-letter" data-letter="g">g</button>
+        <button class="key abc-letter" data-letter="h">h</button>
+        <button class="key abc-letter" data-letter="j">j</button>
+        <button class="key abc-letter" data-letter="k">k</button>
+        <button class="key abc-letter" data-letter="l">l</button>
+
+        <button class="key" data-cmd="alpha-back" title="Back to numeric">123</button>
+        <button class="key abc-letter" data-letter="z">z</button>
+        <button class="key abc-letter" data-letter="x">x</button>
+        <button class="key abc-letter" data-letter="c">c</button>
+        <button class="key abc-letter" data-letter="v">v</button>
+        <button class="key abc-letter" data-letter="b">b</button>
+        <button class="key abc-letter" data-letter="n">n</button>
+        <button class="key abc-letter" data-letter="m">m</button>
+        <button class="key num wide" data-cmd="backspace" title="Backspace">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 5H8l-7 7 7 7h13a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2z"/><line x1="18" y1="9" x2="12" y2="15"/><line x1="12" y1="9" x2="18" y2="15"/></svg>
+        </button>
+      </div>
+      <!-- Row 1: variables / squared / numpad 7-9 ÷ / functions -->
+      <button class="key" data-letter="x">x</button>
+      <button class="key" data-letter="y">y</button>
+      <button class="key" data-latex="^{2}" data-latex-tex="a^2"></button>
+      <button class="key" data-latex="^{#?}" data-latex-tex="a^b"></button>
+      <button class="key num" data-insert="7">7</button>
+      <button class="key num" data-insert="8">8</button>
+      <button class="key num" data-insert="9">9</button>
+      <button class="key" data-insert="\div" data-latex-tex="\div"></button>
+      <button class="key wide" data-cmd="functions" data-label-tex="f(x)"></button>
+
+      <!-- Row 2: parens / comparisons / numpad 4-6 × / arrows -->
+      <button class="key" data-insert="(">(</button>
+      <button class="key" data-insert=")">)</button>
+      <button class="key" data-insert="<">&lt;</button>
+      <button class="key" data-insert=">">&gt;</button>
+      <button class="key num" data-insert="4">4</button>
+      <button class="key num" data-insert="5">5</button>
+      <button class="key num" data-insert="6">6</button>
+      <button class="key" data-insert="\times" data-latex-tex="\times"></button>
+      <button class="key" data-cmd="left" title="Move left">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+      </button>
+      <button class="key" data-cmd="right" title="Move right">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+      </button>
+
+      <!-- Row 3: abs / comma / inequalities / numpad 1-3 - / backspace(wide) -->
+      <button class="key" data-cmd="abs" data-latex-tex="|a|"></button>
+      <button class="key" data-insert=",">,</button>
+      <button class="key" data-insert="\le" data-latex-tex="\le"></button>
+      <button class="key" data-insert="\ge" data-latex-tex="\ge"></button>
+      <button class="key num" data-insert="1">1</button>
+      <button class="key num" data-insert="2">2</button>
+      <button class="key num" data-insert="3">3</button>
+      <button class="key" data-insert="-" data-latex-tex="-"></button>
+      <button class="key wide" data-cmd="backspace" title="Backspace">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 5H8l-7 7 7 7h13a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2z"/><line x1="18" y1="9" x2="12" y2="15"/><line x1="12" y1="9" x2="18" y2="15"/></svg>
+      </button>
+
+      <!-- Row 4: ABC / audio / sqrt / pi / numpad 0 . = + / Enter(wide) -->
+      <button class="key" data-cmd="abc">ABC</button>
+      <button class="key" data-cmd="audio" title="Read aloud">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
+      </button>
+      <button class="key" data-cmd="sqrt" data-latex-tex="\sqrt{\phantom{x}}"></button>
+      <button class="key" data-insert="\pi" data-latex-tex="\pi"></button>
+      <button class="key num" data-insert="0">0</button>
+      <button class="key num" data-insert=".">.</button>
+      <button class="key" data-insert="=">=</button>
+      <button class="key" data-insert="+" data-latex-tex="+"></button>
+      <button class="key enter" data-cmd="enter" title="New expression">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 10 4 15 9 20"/><path d="M20 4v7a4 4 0 0 1-4 4H4"/></svg>
+      </button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  // -------------------------------------------------------------------
+  // Extend math.js with calculator-specific helpers and wrappers around
+  // the jStat probability library. Registered once before any evaluation.
+  // -------------------------------------------------------------------
+  (function registerCustomFunctions() {
+    if (typeof math === 'undefined' || !math.import) return;
+    const J = (typeof jStat !== 'undefined') ? jStat : null;
+
+    // Helper to flatten args: jStat methods want arrays, math.js calls
+    // arrive either as varargs or with the data already as a Matrix.
+    function flatten(args) {
+      const out = [];
+      const visit = v => {
+        if (v == null) return;
+        if (Array.isArray(v)) v.forEach(visit);
+        else if (v && typeof v.toArray === 'function') v.toArray().forEach(visit);
+        else out.push(typeof v === 'number' ? v : Number(v));
+      };
+      args.forEach(visit);
+      return out;
+    }
+
+    math.import({
+      // ===== Statistics =====
+      count(...args) { return flatten(args).length; },
+      quartile(...args) {
+        // quartile(d1, d2, ..., q) — last arg is quartile index (0-4)
+        const arr = flatten(args);
+        const q = arr.pop();
+        return math.quantileSeq(arr, q / 4);
+      },
+
+      // ===== List operations (varargs versions for our calculator UX) =====
+      length(...args) { return flatten(args).length; },
+      sort(...args) {
+        const a = flatten(args).slice().sort((x, y) => x - y);
+        return math.matrix(a);
+      },
+      reverse(...args) { return math.matrix(flatten(args).slice().reverse()); },
+      unique(...args) {
+        const seen = new Set();
+        const out = [];
+        for (const v of flatten(args)) if (!seen.has(v)) { seen.add(v); out.push(v); }
+        return math.matrix(out);
+      },
+      join(...args) { return math.matrix(flatten(args)); },
+      // range(start, end, step?) — handles reversed bounds, defaults step=1.
+      range(start, end, step) {
+        if (end === undefined) { end = start; start = 1; }
+        if (start === end) return math.matrix([start]);
+        const dir = end > start ? 1 : -1;
+        const stepAbs = step === undefined ? 1 : Math.abs(step);
+        const stepSigned = stepAbs * dir;
+        if (stepAbs === 0) return NaN;
+        const out = [];
+        for (let i = start; (dir > 0 ? i <= end + 1e-12 : i >= end - 1e-12); i += stepSigned) out.push(i);
+        return math.matrix(out);
+      },
+
+      // ===== Geometry =====
+      distance(x1, y1, x2, y2) { return Math.hypot(x2 - x1, y2 - y1); },
+      midpoint(x1, y1, x2, y2) { return math.matrix([(x1 + x2) / 2, (y1 + y2) / 2]); },
+      slope(x1, y1, x2, y2) {
+        // Vertical line OR coincident point → undefined (NaN propagates to "undefined" chip).
+        if (x2 - x1 === 0) return NaN;
+        return (y2 - y1) / (x2 - x1);
+      },
+      // Angle between two vectors from origin; returns radians.
+      // A zero-magnitude vector makes the angle undefined.
+      angle(x1, y1, x2, y2) {
+        const dot = x1 * x2 + y1 * y2;
+        const m1 = Math.hypot(x1, y1), m2 = Math.hypot(x2, y2);
+        if (m1 === 0 || m2 === 0) return NaN;
+        return Math.acos(Math.max(-1, Math.min(1, dot / (m1 * m2))));
+      },
+
+      // ===== Probability distributions (jStat-backed; pdf-by-default) =====
+      // Each call signature: dist(x, ...params) → pdf/pmf at x.
+      // Invalid parameters return NaN (→ "undefined" chip); out-of-support
+      // values that are still valid (e.g. negative k for poisson) return 0.
+      normaldist(x, mu, sigma) {
+        if (!J) return NaN;
+        mu = mu ?? 0; sigma = sigma ?? 1;
+        if (!(sigma > 0)) return NaN;
+        return J.normal.pdf(x, mu, sigma);
+      },
+      tdist(x, df) {
+        if (!J) return NaN;
+        if (!(df > 0)) return NaN;
+        return J.studentt.pdf(x, df);
+      },
+      chisqdist(x, df) {
+        if (!J) return NaN;
+        if (!(df > 0)) return NaN;
+        if (x < 0) return 0;
+        return J.chisquare.pdf(x, df);
+      },
+      fdist(x, df1, df2) {
+        if (!J) return NaN;
+        if (!(df1 > 0) || !(df2 > 0)) return NaN;
+        if (x < 0) return 0;
+        return J.centralF.pdf(x, df1, df2);
+      },
+      binomdist(k, n, p) {
+        if (!J) return NaN;
+        if (!Number.isInteger(n) || n < 0) return NaN;
+        if (p < 0 || p > 1) return NaN;
+        if (!Number.isInteger(k) || k < 0 || k > n) return 0;
+        return J.binomial.pdf(k, n, p);
+      },
+      poissondist(k, lambda) {
+        if (!J) return NaN;
+        if (!(lambda > 0)) return NaN;
+        if (!Number.isInteger(k) || k < 0) return 0;
+        return J.poisson.pdf(k, lambda);
+      },
+      normalcdf(x, mu, sigma) {
+        if (!J) return NaN;
+        mu = mu ?? 0; sigma = sigma ?? 1;
+        if (!(sigma > 0)) return NaN;
+        return J.normal.cdf(x, mu, sigma);
+      },
+
+      // ===== Inference =====
+      // Each returns a single scalar (p-value or statistic). NaN signals
+      // degenerate inputs (e.g. zero variance) → "undefined" chip.
+      ttest(sampleMean, sampleSd, n, hypMean) {
+        if (!J) return NaN;
+        if (!(sampleSd > 0) || !(n > 1)) return NaN;
+        hypMean = hypMean ?? 0;
+        const t = (sampleMean - hypMean) / (sampleSd / Math.sqrt(n));
+        return 2 * (1 - J.studentt.cdf(Math.abs(t), n - 1));
+      },
+      ztest(sampleMean, popSd, n, hypMean) {
+        if (!J) return NaN;
+        if (!(popSd > 0) || !(n > 0)) return NaN;
+        hypMean = hypMean ?? 0;
+        const z = (sampleMean - hypMean) / (popSd / Math.sqrt(n));
+        return 2 * (1 - J.normal.cdf(Math.abs(z), 0, 1));
+      },
+      chitest(observed, expected) {
+        if (!J) return NaN;
+        if (!(expected > 0)) return NaN;
+        return Math.pow(observed - expected, 2) / expected;
+      },
+      ftest(var1, var2) {
+        if (!J) return NaN;
+        if (!(var2 > 0)) return NaN;
+        return var1 / var2;
+      },
+      sproptest(success, n, hypProp) {
+        if (!J) return NaN;
+        if (!(n > 0)) return NaN;
+        hypProp = hypProp ?? 0.5;
+        if (hypProp <= 0 || hypProp >= 1) return NaN;
+        const p = success / n;
+        const z = (p - hypProp) / Math.sqrt(hypProp * (1 - hypProp) / n);
+        return 2 * (1 - J.normal.cdf(Math.abs(z), 0, 1));
+      },
+      tproptest(s1, n1, s2, n2) {
+        if (!J) return NaN;
+        if (!(n1 > 0) || !(n2 > 0)) return NaN;
+        const p1 = s1 / n1, p2 = s2 / n2;
+        const pPool = (s1 + s2) / (n1 + n2);
+        const denom = pPool * (1 - pPool) * (1/n1 + 1/n2);
+        if (!(denom > 0)) return NaN;     // equal-zero or equal-one proportions
+        const z = (p1 - p2) / Math.sqrt(denom);
+        return 2 * (1 - J.normal.cdf(Math.abs(z), 0, 1));
+      },
+
+      // ===== Calculus (numeric — exprStr is math.js syntax, not LaTeX) =====
+      // LaTeX→math.js preprocessor in latexToExpr() converts \sum/\prod/\int/\lim/\frac{d}{dx}
+      // into calls to these. Body strings come in already lowered to math.js syntax.
+      derivativeOf(exprStr, varName) {
+        // Returns the symbolic derivative as a math.js expression string.
+        // The calculator displays this string via KaTeX in the result chip.
+        return math.derivative(exprStr, varName).toString();
+      },
+      sumOver(exprStr, varName, lo, hi) {
+        const node = math.parse(exprStr);
+        let total = 0;
+        for (let i = lo; i <= hi; i++) total += node.evaluate({ [varName]: i });
+        return total;
+      },
+      prodOver(exprStr, varName, lo, hi) {
+        const node = math.parse(exprStr);
+        let total = 1;
+        for (let i = lo; i <= hi; i++) total *= node.evaluate({ [varName]: i });
+        return total;
+      },
+      integrateNumeric(exprStr, varName, lo, hi) {
+        // Composite Simpson's rule, n=1000 intervals.
+        // Early-bail to NaN if any sample is non-finite (singularity in domain).
+        const node = math.parse(exprStr);
+        const f = x => node.evaluate({ [varName]: x });
+        const n = 1000, h = (hi - lo) / n;
+        const fa = f(lo), fb = f(hi);
+        if (!Number.isFinite(fa) || !Number.isFinite(fb)) return NaN;
+        let total = fa + fb;
+        for (let i = 1; i < n; i++) {
+          const fx = f(lo + i * h);
+          if (!Number.isFinite(fx)) return NaN;
+          total += (i % 2 ? 4 : 2) * fx;
+        }
+        return (h / 3) * total;
+      },
+      limitOf(exprStr, varName, a) {
+        // Compare left and right neighborhoods. If they diverge significantly
+        // OR one is non-finite, the limit doesn't exist → NaN ("undefined").
+        // Otherwise return the average (handles removable discontinuities).
+        const node = math.parse(exprStr);
+        const eps = 1e-7;
+        let lt, rt;
+        try { lt = node.evaluate({ [varName]: a - eps }); } catch (e) { lt = NaN; }
+        try { rt = node.evaluate({ [varName]: a + eps }); } catch (e) { rt = NaN; }
+        const lFin = Number.isFinite(lt), rFin = Number.isFinite(rt);
+        if (!lFin && !rFin) return NaN;
+        if (!lFin || !rFin) return NaN;     // one side blows up → undefined
+        const scale = Math.max(1, Math.abs(lt), Math.abs(rt));
+        if (Math.abs(lt - rt) > 1 * scale) return NaN;  // discontinuous jump → undefined
+        return (lt + rt) / 2;
+      }
+    // Use override:true because some of our custom names (sort, range, reverse,
+    // unique, length) shadow math.js built-ins. Our calculator's keypad always
+    // passes varargs, not arrays — the override is by design.
+    }, { override: true });
+  })();
+
+  // Render KaTeX labels on math-symbol buttons
+  // Human-readable speech labels for math-symbol keys whose visible content
+  // is rendered via KaTeX and would otherwise be unspoken by screen readers.
+  // Keys are the raw data-latex-tex / data-label-tex strings on the button.
+  const SYMBOL_LABELS = {
+    'a^2':                          'squared',
+    'a^b':                          'raised to a power',
+    '|a|':                          'absolute value',
+    '\\div':                        'divided by',
+    '\\times':                      'times',
+    '\\cdot':                       'times',
+    '\\%':                          'percent',
+    '\\frac{a}{b}':                 'fraction',
+    '\\sqrt{\\phantom{x}}':         'square root',
+    '\\sqrt[n]{\\phantom{x}}':      'nth root',
+    '\\pi':                         'pi',
+    '\\le':                         'less than or equal to',
+    '\\ge':                         'greater than or equal to',
+    '+':                            'plus',
+    '-':                            'minus',
+    'e^x':                          'e to the x',
+    '\\sin^{-1}':                   'inverse sine',
+    '\\cos^{-1}':                   'inverse cosine',
+    '\\tan^{-1}':                   'inverse tangent',
+    '\\csc^{-1}':                   'inverse cosecant',
+    '\\sec^{-1}':                   'inverse secant',
+    '\\cot^{-1}':                   'inverse cotangent',
+    '\\sin':                        'sine',
+    '\\cos':                        'cosine',
+    '\\tan':                        'tangent',
+    '\\csc':                        'cosecant',
+    '\\sec':                        'secant',
+    '\\cot':                        'cotangent',
+    'f(x)':                         'functions'
+  };
+
+  function renderButtonLabels() {
+    document.querySelectorAll('[data-latex-tex], [data-label-tex]').forEach(el => {
+      const tex = el.getAttribute('data-latex-tex') || el.getAttribute('data-label-tex');
+      try {
+        el.innerHTML = katex.renderToString(tex, { throwOnError: false, displayMode: false });
+      } catch (e) { el.textContent = tex; }
+      // Provide a spoken accessible name when the visible label is pure math.
+      if (!el.hasAttribute('aria-label')) {
+        const label = SYMBOL_LABELS[tex];
+        if (label) el.setAttribute('aria-label', label);
+      }
+    });
+    // Mark every decorative <svg> inside a button as hidden from AT, so the
+    // button's title/aria-label is what's announced (not the raw SVG node).
+    document.querySelectorAll('button svg, [role="button"] svg').forEach(svg => {
+      if (!svg.hasAttribute('aria-hidden')) svg.setAttribute('aria-hidden', 'true');
+    });
+  }
+
+  function renderTex(target, tex) {
+    try {
+      katex.render(tex, target, { throwOnError: false, displayMode: false });
+    } catch (e) {
+      target.textContent = tex;
+    }
+  }
+
+  // Material Icons (filled): error (solid circle + !) and warning (triangle + !).
+  // Inlined as SVG so we don't add a font dependency.
+  const STATUS_ICONS = {
+    error: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>',
+    warning: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg>'
+  };
+  // Map our internal status tokens to a Formative chip.
+  // The label is sentence-case; the icon and color come from the chip CSS class.
+  const STATUS_CONFIG = {
+    undefined: { kind: 'error',   label: 'Undefined' },
+    error:     { kind: 'error',   label: 'Invalid expression' },
+    overflow:  { kind: 'warning', label: 'Too large to display' }
+  };
+  function buildStatusChip(resultLatex) {
+    const m = /^\\text\{(\w+)\}$/.exec(resultLatex);
+    if (!m) return null;
+    const cfg = STATUS_CONFIG[m[1]];
+    if (!cfg) return null;
+    const chip = document.createElement('span');
+    chip.className = `status-chip ${cfg.kind}`;
+    chip.setAttribute('role', cfg.kind === 'error' ? 'alert' : 'status');
+    chip.dataset.status = m[1];
+    chip.innerHTML = STATUS_ICONS[cfg.kind] + `<span>${cfg.label}</span>`;
+    return chip;
+  }
+
+  let mf;
+  let angleMode = 'deg';
+  let lastAnswer = null;
+  const entries = [
+    { exprLatex: '\\frac{9}{6}', resultLatex: '1.5' },
+    { exprLatex: '6\\cdot 9',    resultLatex: '54'  }
+  ];
+
+  function init() {
+    mf = document.getElementById('mf');
+    renderButtonLabels();
+    renderHistory();
+    wireKeypad();
+    wireTabs();
+    wireAngle();
+    wireToolbar();
+    wireKeyboard();
+    wireTopTabs();
+    wireKeypadToggles();
+    initGraphView();
+
+    // Disable MathLive's virtual keyboard popup
+    if (window.mathVirtualKeyboard) {
+      window.mathVirtualKeyboard.visible = false;
+    }
+    mf.mathVirtualKeyboardPolicy = 'manual';
+  }
+
+  // --- Top-tab side effects: close transient panels on view switch ---
+  function closeTransientPanels() {
+    const fnPanel = document.getElementById('fn-panel');
+    if (fnPanel?.classList.contains('open')) toggleFnPanel(false);
+    const settings = document.getElementById('graph-settings');
+    if (settings?.classList.contains('open')) {
+      settings.classList.remove('open');
+      document.getElementById('graph-gear')?.setAttribute('aria-expanded', 'false');
+    }
+  }
+
+  // --- Keypad collapse/expand handles ---
+  function wireKeypadToggles() {
+    document.querySelectorAll('.keypad-toggle').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const keypad = btn.closest('.keypad, .graph-keypad');
+        if (!keypad) return;
+        const collapsing = !keypad.classList.contains('collapsed');
+        // If focus is on a key that's about to be hidden, move it to the
+        // toggle so keyboard users don't lose their place to <body>.
+        if (collapsing && document.activeElement &&
+            keypad.contains(document.activeElement) && document.activeElement !== btn) {
+          btn.focus();
+        }
+        keypad.classList.toggle('collapsed', collapsing);
+        btn.setAttribute('aria-expanded', String(!collapsing));
+        btn.setAttribute('aria-label', collapsing ? 'Expand keypad' : 'Collapse keypad');
+        btn.title = collapsing ? 'Expand keypad' : 'Collapse keypad';
+        // Re-render graph on toggle so function-plot picks up the new viewport
+        if (keypad.classList.contains('graph-keypad')) {
+          requestAnimationFrame(() => renderGraph());
+        }
+      });
+    });
+  }
+
+  // --- Top-level view switching (Scientific / Graphing) ---
+  function wireTopTabs() {
+    document.querySelectorAll('.top-tab').forEach(t => {
+      t.addEventListener('click', () => {
+        const target = t.dataset.view;
+        closeTransientPanels();
+        document.querySelectorAll('.top-tab').forEach(x => {
+          const active = x === t;
+          x.classList.toggle('active', active);
+          x.setAttribute('aria-selected', String(active));
+        });
+        document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.id === `view-${target}`));
+        if (target === 'graphing') {
+          // Re-render graph once visible so it picks up correct dimensions
+          renderGraph();
+        }
+      });
+    });
+  }
+
+  // --- Graphing view ---
+  const graphState = {
+    rows: [],
+    nextId: 1,
+    colors: ['#C32113', '#0D64F2', '#138a3d', '#BC8100', '#7C3AED', '#DB2777'],
+    focusedMf: null,
+    sliders: {},      // varName → { value, min, max, step }
+    deletedSliders: new Set()  // names the user explicitly removed — don't auto-recreate
+  };
+  // Settings backing model — every field affects rendering except where noted.
+  const graphSettings = {
+    grid: true,
+    xMin: -10, xMax: 10,
+    yMin: -8,  yMax: 8,
+    xLabel: '', yLabel: '',
+    xStep: null, yStep: null,
+    showXAxis: true,           // WIRED: hides .x.axis group
+    showYAxis: true,           // WIRED: hides .y.axis group
+    axisNumbers: true,         // WIRED: hides tick text labels
+    angle: 'radians',          // WIRED: 'degrees' rewrites trig args before evaluation
+    minorGridlines: false,     // WIRED: opt-in, draws SVG lines at half-step
+    arrows: false,             // WIRED: opt-in, adds SVG arrowheads to axes
+    cartesian: true            // polar not supported — function-plot is Cartesian-only
+  };
+
+  function initGraphView() {
+    const addBtn = document.getElementById('add-expr');
+    if (addBtn) addBtn.addEventListener('click', () => addExpressionRow(''));
+    const addTableBtn = document.getElementById('add-table');
+    if (addTableBtn) addTableBtn.addEventListener('click', () => addTableRow());
+    const addRegBtn = document.getElementById('add-regression');
+    if (addRegBtn) addRegBtn.addEventListener('click', () => addRegressionRow());
+
+    // Track which math-field most recently had focus, across any row.
+    // focusin bubbles (focus doesn't), so we catch programmatic focus too.
+    document.getElementById('expr-rows').addEventListener('focusin', (e) => {
+      const mf = e.target.closest('math-field');
+      if (mf) graphState.focusedMf = mf;
+    });
+
+    // Wire keypad buttons. Use mousedown to capture target before focus moves.
+    document.querySelectorAll('.graph-keypad .key').forEach(k => {
+      k.addEventListener('mousedown', (e) => { e.preventDefault(); });
+      k.addEventListener('click', (e) => {
+        e.preventDefault();
+        handleGraphKey(k);
+      });
+    });
+
+    // Seed with the screenshot example
+    addExpressionRow('y=3x+4');
+    addExpressionRow('');
+
+    wireGraphSettings();
+    buildFunctionPanel();
+  }
+
+  // --- f(x) function library panel ---
+  // Each item has a KaTeX-rendered label (`tex`) and an `insert` string for
+  // MathLive. Functions that math.js supports natively will evaluate; the
+  // rest insert correctly and surface "Invalid expression" on evaluate.
+  const FN_LIBRARY = [
+    { title: 'Trig Functions', items: [
+      { tex: '\\sin', insert: '\\sin\\left(#0\\right)' },
+      { tex: '\\cos', insert: '\\cos\\left(#0\\right)' },
+      { tex: '\\tan', insert: '\\tan\\left(#0\\right)' },
+      { tex: '\\csc', insert: '\\csc\\left(#0\\right)' },
+      { tex: '\\sec', insert: '\\sec\\left(#0\\right)' },
+      { tex: '\\cot', insert: '\\cot\\left(#0\\right)' }
+    ]},
+    { title: 'Inverse Trig Functions', items: [
+      { tex: '\\sin^{-1}', insert: '\\arcsin\\left(#0\\right)' },
+      { tex: '\\cos^{-1}', insert: '\\arccos\\left(#0\\right)' },
+      { tex: '\\tan^{-1}', insert: '\\arctan\\left(#0\\right)' },
+      { tex: '\\csc^{-1}', insert: '\\operatorname{acsc}\\left(#0\\right)' },
+      { tex: '\\sec^{-1}', insert: '\\operatorname{asec}\\left(#0\\right)' },
+      { tex: '\\cot^{-1}', insert: '\\operatorname{acot}\\left(#0\\right)' }
+    ]},
+    { title: 'Statistics', items: [
+      { tex: '\\operatorname{mean}',   insert: '\\operatorname{mean}\\left(#0\\right)' },
+      { tex: '\\operatorname{median}', insert: '\\operatorname{median}\\left(#0\\right)' },
+      { tex: '\\min',                  insert: '\\min\\left(#0\\right)' },
+      { tex: '\\max',                  insert: '\\max\\left(#0\\right)' },
+      { tex: '\\operatorname{stdev}',  insert: '\\operatorname{stdev}\\left(#0\\right)' },
+      { tex: '\\operatorname{stdevp}', insert: '\\operatorname{stdevp}\\left(#0\\right)' },
+      { tex: '\\operatorname{var}',    insert: '\\operatorname{var}\\left(#0\\right)' },
+      { tex: '\\operatorname{count}',  insert: '\\operatorname{count}\\left(#0\\right)' },
+      { tex: '\\operatorname{quartile}', insert: '\\operatorname{quartile}\\left(#0,#?\\right)' }
+    ]},
+    { title: 'List Operations', items: [
+      { tex: '\\operatorname{length}',  insert: '\\operatorname{length}\\left(#0\\right)' },
+      { tex: '\\operatorname{sort}',    insert: '\\operatorname{sort}\\left(#0\\right)' },
+      { tex: '\\operatorname{reverse}', insert: '\\operatorname{reverse}\\left(#0\\right)' },
+      { tex: '\\operatorname{range}',   insert: '\\operatorname{range}\\left(#0,#?\\right)' },
+      { tex: '\\operatorname{unique}',  insert: '\\operatorname{unique}\\left(#0\\right)' },
+      { tex: '\\operatorname{join}',    insert: '\\operatorname{join}\\left(#0,#?\\right)' }
+    ]},
+    { title: 'Visualizations', items: [
+      { tex: '\\operatorname{histogram}', insert: '\\operatorname{histogram}\\left(#0\\right)', wired: false },
+      { tex: '\\operatorname{dotplot}',   insert: '\\operatorname{dotplot}\\left(#0\\right)',   wired: false },
+      { tex: '\\operatorname{boxplot}',   insert: '\\operatorname{boxplot}\\left(#0\\right)',   wired: false }
+    ]},
+    { title: 'Probability Distributions', items: [
+      // All take (x, ...params) and return the pdf/pmf at x.
+      { tex: '\\operatorname{normaldist}',  insert: '\\operatorname{normaldist}\\left(#0,#?,#?\\right)' },
+      { tex: '\\operatorname{tdist}',       insert: '\\operatorname{tdist}\\left(#0,#?\\right)' },
+      { tex: '\\operatorname{chisqdist}',   insert: '\\operatorname{chisqdist}\\left(#0,#?\\right)' },
+      { tex: '\\operatorname{fdist}',       insert: '\\operatorname{fdist}\\left(#0,#?,#?\\right)' },
+      { tex: '\\operatorname{binomdist}',   insert: '\\operatorname{binomdist}\\left(#0,#?,#?\\right)' },
+      { tex: '\\operatorname{poissondist}', insert: '\\operatorname{poissondist}\\left(#0,#?\\right)' }
+    ]},
+    { title: 'Inference', items: [
+      { tex: '\\operatorname{ttest}',     insert: '\\operatorname{ttest}\\left(#0,#?,#?\\right)' },
+      { tex: '\\operatorname{ztest}',     insert: '\\operatorname{ztest}\\left(#0,#?,#?\\right)' },
+      { tex: '\\operatorname{chitest}',   insert: '\\operatorname{chitest}\\left(#0,#?\\right)' },
+      { tex: '\\operatorname{ftest}',     insert: '\\operatorname{ftest}\\left(#0,#?\\right)' },
+      { tex: '\\operatorname{sproptest}', insert: '\\operatorname{sproptest}\\left(#0,#?,#?\\right)' },
+      { tex: '\\operatorname{tproptest}', insert: '\\operatorname{tproptest}\\left(#0,#?,#?,#?\\right)' }
+    ]},
+    { title: 'Calculus', items: [
+      // Each calculus operator requires its body wrapped in parens; the LaTeX
+      // preprocessor in latexToExpr matches those forms.
+      { tex: '\\frac{d}{dx}', insert: '\\frac{d}{dx}\\left(#0\\right)' },
+      { tex: '\\int',         insert: '\\int_{#?}^{#?}\\left(#0\\right)\\, dx' },
+      { tex: '\\lim',         insert: '\\lim_{#?\\to #?}\\left(#0\\right)' },
+      { tex: '\\sum',         insert: '\\sum_{#?=#?}^{#?}\\left(#0\\right)' },
+      { tex: '\\prod',        insert: '\\prod_{#?=#?}^{#?}\\left(#0\\right)' }
+    ]},
+    { title: 'Hyperbolic Trig', items: [
+      { tex: '\\sinh', insert: '\\sinh\\left(#0\\right)' },
+      { tex: '\\cosh', insert: '\\cosh\\left(#0\\right)' },
+      { tex: '\\tanh', insert: '\\tanh\\left(#0\\right)' },
+      { tex: '\\operatorname{csch}', insert: '\\operatorname{csch}\\left(#0\\right)' },
+      { tex: '\\operatorname{sech}', insert: '\\operatorname{sech}\\left(#0\\right)' },
+      { tex: '\\operatorname{coth}', insert: '\\operatorname{coth}\\left(#0\\right)' }
+    ]},
+    { title: 'Geometry', items: [
+      // Each takes four coordinates: x1, y1, x2, y2.
+      { tex: '\\operatorname{distance}', insert: '\\operatorname{distance}\\left(#0,#?,#?,#?\\right)' },
+      { tex: '\\operatorname{midpoint}', insert: '\\operatorname{midpoint}\\left(#0,#?,#?,#?\\right)' },
+      { tex: '\\operatorname{slope}',    insert: '\\operatorname{slope}\\left(#0,#?,#?,#?\\right)' },
+      { tex: '\\operatorname{angle}',    insert: '\\operatorname{angle}\\left(#0,#?,#?,#?\\right)' }
+    ]},
+    { title: 'Number Theory', items: [
+      { tex: '\\gcd',  insert: '\\gcd\\left(#0,#?\\right)' },
+      { tex: '\\operatorname{lcm}',     insert: '\\operatorname{lcm}\\left(#0,#?\\right)' },
+      { tex: '\\bmod', insert: '\\operatorname{mod}\\left(#0,#?\\right)' },
+      { tex: '\\lfloor a \\rfloor',     insert: '\\operatorname{floor}\\left(#0\\right)' },
+      { tex: '\\lceil a \\rceil',       insert: '\\operatorname{ceil}\\left(#0\\right)' },
+      { tex: '\\operatorname{round}',   insert: '\\operatorname{round}\\left(#0\\right)' },
+      { tex: 'n!',     insert: '#0!' },
+      { tex: '\\operatorname{isPrime}', insert: '\\operatorname{isPrime}\\left(#0\\right)' }
+    ]}
+  ];
+
+  function buildFunctionPanel() {
+    const body = document.getElementById('fn-panel-body');
+    if (!body) return;
+    const frag = document.createDocumentFragment();
+    FN_LIBRARY.forEach(section => {
+      const sec = document.createElement('section');
+      sec.className = 'fn-section';
+      const h = document.createElement('h4');
+      h.textContent = section.title;
+      sec.appendChild(h);
+      const grid = document.createElement('div');
+      grid.className = 'fn-grid';
+      section.items.forEach(it => {
+        const btn = document.createElement('button');
+        const wired = it.wired !== false;
+        btn.className = 'fn-btn' + (wired ? '' : ' unwired');
+        btn.dataset.insert = it.insert;
+        btn.dataset.wired = String(wired);
+        let labelHtml = '';
+        try { labelHtml = katex.renderToString(it.tex, { throwOnError: false, displayMode: false }); }
+        catch (e) { labelHtml = it.tex; }
+        if (!wired) {
+          btn.disabled = true;
+          btn.title = 'Not yet implemented — coming in v2';
+          btn.setAttribute('aria-disabled', 'true');
+          btn.innerHTML = labelHtml + '<span class="fn-badge">Soon</span>';
+        } else {
+          btn.innerHTML = labelHtml;
+        }
+        btn.addEventListener('mousedown', (e) => e.preventDefault());
+        btn.addEventListener('click', () => {
+          if (!wired) return; // No-op for not-yet-implemented entries
+          insertFromLibrary(it.insert);
+        });
+        grid.appendChild(btn);
+      });
+      sec.appendChild(grid);
+      frag.appendChild(sec);
+    });
+    body.innerHTML = '';
+    body.appendChild(frag);
+
+    // Open/close wiring
+    const panel = document.getElementById('fn-panel');
+    document.getElementById('fn-panel-close').addEventListener('click', () => toggleFnPanel(false));
+    document.addEventListener('click', (e) => {
+      if (!panel.classList.contains('open')) return;
+      if (panel.contains(e.target)) return;
+      // Don't close when clicking the f(x) trigger (its handler will toggle)
+      if (e.target.closest('[data-cmd="functions"]')) return;
+      toggleFnPanel(false);
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && panel.classList.contains('open')) toggleFnPanel(false);
+    });
+  }
+
+  let fnPanelOpener = null;
+  function toggleFnPanel(force) {
+    const panel = document.getElementById('fn-panel');
+    const wasOpen = panel.classList.contains('open');
+    const open = typeof force === 'boolean' ? force : !wasOpen;
+    if (open === wasOpen) return;
+    panel.classList.toggle('open', open);
+    panel.setAttribute('aria-hidden', String(!open));
+    if (open) {
+      // Remember where focus came from so we can restore on close.
+      fnPanelOpener = document.activeElement;
+      document.getElementById('fn-panel-close')?.focus();
+    } else {
+      // Restore focus to whatever opened the panel (typically the f(x) key).
+      if (fnPanelOpener && typeof fnPanelOpener.focus === 'function' &&
+          document.body.contains(fnPanelOpener)) {
+        fnPanelOpener.focus();
+      }
+      fnPanelOpener = null;
+    }
+  }
+
+  function insertFromLibrary(insert) {
+    const mfTarget = graphState.focusedMf || graphState.rows[0]?.mathfield;
+    if (!mfTarget) return;
+    mfTarget.focus();
+    mfTarget.executeCommand(['insert', insert, { selectionMode: 'placeholder' }]);
+    toggleFnPanel(false);
+  }
+
+  // Track recent placeholder-template insertions per math-field. When the user
+  // inserts an operator after filling a template (a^b, frac, sqrt, etc.), we
+  // call moveAfterParent first so the operator lands outside the template,
+  // matching expectations like "x^2 + 3x" (vs. "x^{2+3x}").
+  const _templateActive = new WeakMap();
+  function isOperatorInsert(s) {
+    return ['+','-','\\times','\\div','\\cdot','=','<','>','\\le','\\ge',','].indexOf(s) >= 0;
+  }
+  function isTemplateLatex(s) {
+    return typeof s === 'string' && /#\?/.test(s);
+  }
+
+  function handleGraphKey(k) {
+    const mfTarget = graphState.focusedMf || graphState.rows[0]?.mathfield;
+    if (!mfTarget) return;
+    mfTarget.focus();
+    const insert = k.dataset.insert;
+    const cmd = k.dataset.cmd;
+    const fn = k.dataset.fn;
+    const letter = k.dataset.letter;
+    const latex = k.dataset.latex;
+
+    // Smart-exit on operator after template
+    if (_templateActive.get(mfTarget) && insert !== undefined && isOperatorInsert(insert)) {
+      try { mfTarget.executeCommand('moveAfterParent'); } catch (e) {}
+      _templateActive.set(mfTarget, false);
+    }
+    if (letter) {
+      mfTarget.executeCommand(['insert', letter]);
+    } else if (insert !== undefined) {
+      mfTarget.executeCommand(['insert', insert]);
+    } else if (latex) {
+      mfTarget.executeCommand(['insert', latex, { selectionMode: 'placeholder' }]);
+    } else if (fn) {
+      mfTarget.executeCommand(['insert', `\\${fn}\\left(#0\\right)`, { selectionMode: 'placeholder' }]);
+    } else if (cmd === 'backspace') {
+      mfTarget.executeCommand('deleteBackward');
+    } else if (cmd === 'left') {
+      mfTarget.executeCommand('moveToPreviousChar');
+    } else if (cmd === 'right') {
+      mfTarget.executeCommand('moveToNextChar');
+    } else if (cmd === 'sqrt') {
+      mfTarget.executeCommand(['insert', '\\sqrt{#0}', { selectionMode: 'placeholder' }]);
+    } else if (cmd === 'abs') {
+      mfTarget.executeCommand(['insert', '\\left|#0\\right|', { selectionMode: 'placeholder' }]);
+    } else if (cmd === 'enter') {
+      addExpressionRow('');
+    } else if (cmd === 'functions') {
+      toggleFnPanel();
+    } else if (cmd === 'abc') {
+      document.querySelector('.graph-keypad').dataset.mode = 'alpha';
+    } else if (cmd === 'alpha-back') {
+      document.querySelector('.graph-keypad').dataset.mode = 'numeric';
+    } else if (cmd === 'audio') {
+      speakExpression(mfTarget.value || '');
+    }
+
+    // Update template-active flag for next keystroke.
+    if (isTemplateLatex(latex)) _templateActive.set(mfTarget, true);
+    else if (insert !== undefined && isOperatorInsert(insert)) _templateActive.set(mfTarget, false);
+    // Digits / letters stay inside the template (user is filling it), so don't touch the flag.
+  }
+
+  // Convert LaTeX to a roughly-readable string and use the Web Speech API.
+  function speakExpression(latex) {
+    if (!('speechSynthesis' in window)) return;
+    const phrase = latexToSpeech(latex);
+    if (!phrase) return;
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.speak(new SpeechSynthesisUtterance(phrase));
+  }
+  function latexToSpeech(latex) {
+    if (!latex) return 'empty';
+    let s = latex;
+    s = s.replace(/\\frac\s*\{([^{}]*)\}\s*\{([^{}]*)\}/g, ' $1 over $2 ');
+    s = s.replace(/\\sqrt\s*\{([^{}]*)\}/g, ' square root of $1 ');
+    s = s.replace(/\\sqrt\s*\[([^\]]+)\]\s*\{([^{}]*)\}/g, ' $1 root of $2 ');
+    s = s.replace(/\\left\|([^|]+)\\right\|/g, ' absolute value of $1 ');
+    s = s.replace(/\^\{([^{}]*)\}/g, ' to the power of $1 ');
+    s = s.replace(/\^(\w)/g, ' to the power of $1 ');
+    s = s.replace(/\\(sin|cos|tan|csc|sec|cot|sinh|cosh|tanh|ln|log|exp|arcsin|arccos|arctan)/g, ' $1 of ');
+    s = s.replace(/\\pi/g, ' pi ');
+    s = s.replace(/\\cdot|\\times/g, ' times ');
+    s = s.replace(/\\div|\//g, ' divided by ');
+    s = s.replace(/\\left\(/g, ' ( ').replace(/\\right\)/g, ' ) ');
+    s = s.replace(/\\operatorname\{([^}]+)\}/g, ' $1 ');
+    s = s.replace(/[{}\\]/g, ' ');
+    s = s.replace(/\+/g, ' plus ').replace(/-/g, ' minus ');
+    s = s.replace(/\s+/g, ' ').trim();
+    return s;
+  }
+
+  // Visible swatch is a color square; this lookup gives the same information
+  // in words so colorblind / SR users can distinguish expressions (WCAG 1.4.1).
+  const COLOR_NAMES = ['red', 'blue', 'green', 'amber', 'purple', 'pink'];
+
+  function addExpressionRow(latex) {
+    const id = graphState.nextId++;
+    const idx = graphState.rows.length;
+    const color = graphState.colors[idx % graphState.colors.length];
+    const colorName = COLOR_NAMES[idx % COLOR_NAMES.length];
+    const fnNumber = idx + 1;
+    const row = document.createElement('div');
+    row.className = 'expr-row';
+    row.dataset.id = id;
+    row.innerHTML = `
+      <div class="expr-color" style="background:${color}" aria-label="Function ${fnNumber}, ${colorName}">
+        <span class="sr-only">Function ${fnNumber}, ${colorName}</span>
+        <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M3 17q3-10 9-10t9 10"/></svg>
+      </div>
+      <math-field class="expr-field" aria-label="Expression ${fnNumber}"></math-field>
+      <button class="expr-delete" aria-label="Remove expression ${fnNumber}">×</button>
+    `;
+    const mfEl = row.querySelector('math-field');
+    mfEl.mathVirtualKeyboardPolicy = 'manual';
+    mfEl.addEventListener('focus', () => { graphState.focusedMf = mfEl; });
+    mfEl.addEventListener('input', () => renderGraph());
+    row.querySelector('.expr-delete').addEventListener('click', () => {
+      graphState.rows = graphState.rows.filter(r => r.id !== id);
+      row.remove();
+      renderGraph();
+    });
+    document.getElementById('expr-rows').appendChild(row);
+    graphState.rows.push({ id, type: 'expr', mathfield: mfEl, color });
+    if (latex) {
+      // Wait a tick for custom element to be ready
+      setTimeout(() => { mfEl.value = latex; renderGraph(); }, 0);
+    }
+    mfEl.focus();
+  }
+
+  // Exposed for debugging — keep so tests can verify the conversion layer.
+  window.__latexToGraphableFn = (l) => latexToGraphableFn(l);
+  // Returns a function-plot data entry: { fn, fnType, closed, points, ... } or null.
+  // Supports: y = f(x), bare f(x), y > f(x) / y < f(x) / y >= / y <=, and
+  // implicit equations like "x^2 + y^2 = 25" (rendered via fnType: implicit).
+  function latexToGraphableFn(latex) {
+    if (!latex) return null;
+    if (/\\placeholder\s*\{\s*\}/.test(latex)) return null;
+    const trimmed = latex.trim();
+    // ----- Table column tuple: (x_n, y_n) → scatter of paired data points -----
+    const colTuple = /^\s*\(\s*([xy])_\{?(\d+)\}?\s*,\s*([xy])_\{?(\d+)\}?\s*\)\s*$/.exec(
+      trimmed.replace(/\\left|\\right/g, '')
+    );
+    if (colTuple) {
+      const colA = `${colTuple[1]}_${colTuple[2]}`;
+      const colB = `${colTuple[3]}_${colTuple[4]}`;
+      const a = getTableColumn(colA), b = getTableColumn(colB);
+      if (a && b) {
+        const pts = [];
+        const n = Math.min(a.length, b.length);
+        for (let i = 0; i < n; i++) {
+          if (a[i] !== null && b[i] !== null) pts.push([a[i], b[i]]);
+        }
+        if (pts.length === 0) return null;
+        return { fnType: 'points', points: pts, graphType: 'scatter' };
+      }
+      // Subscripted vars but no matching table → reject
+      return null;
+    }
+    // ----- Coordinate point OR parametric tuple: (expr, expr) -----
+    // Static numeric tuple → single dot. Tuple referencing `t` → parametric curve.
+    // Use balanced-paren splitting so (cos(t), sin(t)) splits at the OUTER comma.
+    const stripped = trimmed.replace(/\\left|\\right/g, '');
+    let tupleParts = null;
+    if (stripped.startsWith('(') && stripped.endsWith(')')) {
+      const inner = stripped.slice(1, -1);
+      let depth = 0, commaIdx = -1;
+      for (let i = 0; i < inner.length; i++) {
+        const ch = inner[i];
+        if (ch === '(' || ch === '{' || ch === '[') depth++;
+        else if (ch === ')' || ch === '}' || ch === ']') depth--;
+        else if (ch === ',' && depth === 0) {
+          if (commaIdx >= 0) { commaIdx = -2; break; } // more than one top-level comma → not a tuple
+          commaIdx = i;
+        }
+      }
+      if (commaIdx > 0 && depth === 0) tupleParts = [inner.slice(0, commaIdx).trim(), inner.slice(commaIdx + 1).trim()];
+    }
+    if (tupleParts) {
+      const xRaw = latexToExpr(tupleParts[0]);
+      const yRaw = latexToExpr(tupleParts[1]);
+      if (xRaw && yRaw) {
+        let xN, yN;
+        try { xN = math.parse(xRaw); yN = math.parse(yRaw); } catch (_) { xN = null; }
+        if (xN && yN) {
+          const free = new Set([...collectFreeSymbols(xN), ...collectFreeSymbols(yN)]);
+          const usesT = free.has('t');
+          const extras = [...free].filter(s => s !== 't');
+          if (usesT && extras.length === 0) {
+            const tSamples = [-1, 0, 1, 2];
+            let anyFinite = false;
+            for (const tv of tSamples) {
+              try {
+                const vx = xN.evaluate(new Map([['t', tv]]));
+                const vy = yN.evaluate(new Map([['t', tv]]));
+                if (Number.isFinite(vx) && Number.isFinite(vy)) anyFinite = true;
+              } catch (_) { return null; }
+            }
+            if (!anyFinite) return null;
+            let xExpr = xRaw, yExpr = yRaw;
+            if (graphSettings.angle === 'degrees') { xExpr = applyDegMode(xExpr); yExpr = applyDegMode(yExpr); }
+            return { fnType: 'parametric', graphType: 'polyline', x: xExpr, y: yExpr, range: [-2 * Math.PI, 2 * Math.PI] };
+          }
+          if (free.size === 0) {
+            try {
+              const px = xN.evaluate({}), py = yN.evaluate({});
+              if (Number.isFinite(px) && Number.isFinite(py)) {
+                return { points: [[px, py]], fnType: 'points', graphType: 'scatter' };
+              }
+            } catch (_) { /* fall through */ }
+          }
+          if (extras.length > 0) return null;
+        }
+      }
+    }
+    // ----- Polygon: polygon((x1,y1),(x2,y2),...) — connected polyline, auto-closed -----
+    const polyMatch = /^\s*polygon\s*\((.*)\)\s*$/i.exec(stripped);
+    if (polyMatch) {
+      const body = polyMatch[1];
+      const ptRegex = /\(\s*([-+]?[\d.]+(?:e[-+]?\d+)?)\s*,\s*([-+]?[\d.]+(?:e[-+]?\d+)?)\s*\)/g;
+      const pts = [];
+      let m;
+      while ((m = ptRegex.exec(body)) !== null) {
+        const px = parseFloat(m[1]), py = parseFloat(m[2]);
+        if (!Number.isFinite(px) || !Number.isFinite(py)) return null;
+        pts.push([px, py]);
+      }
+      if (pts.length < 2) return null;
+      // Reject if anything besides commas/whitespace remains
+      const cleaned = body.replace(ptRegex, '').replace(/[\s,]/g, '');
+      if (cleaned.length > 0) return null;
+      const closed = [...pts, pts[0]];
+      return { fnType: 'points', points: closed, graphType: 'polyline' };
+    }
+    // ----- Inequality: y < expr, y > expr, y <= expr, y >= expr -----
+    const ineqMatch = /^\s*y\s*(<=|>=|\\le|\\ge|<|>)\s*(.+)$/i.exec(trimmed);
+    if (ineqMatch) {
+      const op = ineqMatch[1];
+      const above = (op === '>' || op === '>=' || op === '\\ge');
+      let rhs = latexToExpr(ineqMatch[2].trim());
+      if (!rhs) return null;
+      if (graphSettings.angle === 'degrees') rhs = applyDegMode(rhs);
+      let rhsNode;
+      try { rhsNode = math.parse(rhs); } catch (e) { return null; }
+      // Auto-promote sliders for free symbols (other than x/y)
+      rhsNode = autoPromoteAndSubstitute(rhsNode, ['x', 'y']);
+      rhs = rhsNode.toString();
+      // function-plot uses `closed: true` to fill between curve and a baseline
+      return { fn: rhs, closed: true, skipBoundsCheck: false };
+    }
+    // ----- Implicit equation: anything with both x AND y AND "=" -----
+    const eqMatch = /^\s*([^=]+?)\s*=\s*([^=]+?)\s*$/.exec(trimmed);
+    if (eqMatch && !/^\s*y\s*=/i.test(trimmed)) {
+      // Has '=' but isn't "y = ..." → treat as implicit F(x,y) = 0
+      let lhs = latexToExpr(eqMatch[1].trim());
+      let rhs = latexToExpr(eqMatch[2].trim());
+      if (!lhs || !rhs) return null;
+      // math.js doesn't treat letter-letter as implicit multiplication
+      // (so "xy" is a single identifier, not x*y). For plot expressions we
+      // know only x and y are variables — insert explicit * between adjacent
+      // x/y letters so "xy=1", "yx", "yxy" all parse correctly.
+      const fixAdjacent = s => {
+        let prev;
+        do { prev = s; s = s.replace(/([xy])([xy])/g, '$1*$2'); } while (s !== prev);
+        return s;
+      };
+      lhs = fixAdjacent(lhs); rhs = fixAdjacent(rhs);
+      let fnExpr = `(${lhs}) - (${rhs})`;
+      if (graphSettings.angle === 'degrees') fnExpr = applyDegMode(fnExpr);
+      try { math.parse(fnExpr); } catch (e) { return null; }
+      // Verify the expression actually references both x and y as variables.
+      // Walk the math.js AST — regex can't reliably distinguish `xy` (implicit
+      // mult: x*y) from `x` alone, but parsing it does the right thing.
+      let parsed;
+      try { parsed = math.parse(fnExpr); } catch (e) { return null; }
+      const symbols = new Set();
+      parsed.traverse(node => {
+        if (node.isSymbolNode || node.type === 'SymbolNode') symbols.add(node.name);
+      });
+      if (!symbols.has('x') || !symbols.has('y')) return null;
+      // Auto-promote sliders for any free symbols beyond x/y
+      const promoted = autoPromoteAndSubstitute(parsed, ['x', 'y']);
+      return { fn: promoted.toString(), fnType: 'implicit' };
+    }
+    // ----- Derivative graphing: y = \frac{d}{dx}(expr) -----
+    const derivHeader = /^\s*y\s*=\s*\\frac\s*\{\s*d\s*\}\s*\{\s*dx\s*\}\s*/i;
+    const dhMatch = derivHeader.exec(stripped);
+    if (dhMatch) {
+      const after = stripped.slice(dhMatch[0].length).trim();
+      if (after.startsWith('(')) {
+        // Balanced-paren scan
+        let depth = 0, end = -1;
+        for (let i = 0; i < after.length; i++) {
+          if (after[i] === '(') depth++;
+          else if (after[i] === ')') { depth--; if (depth === 0) { end = i; break; } }
+        }
+        if (end === after.length - 1) {
+          const bodyLatex = after.slice(1, end);
+          const body = latexToExpr(bodyLatex);
+          if (!body) return null;
+          let bodyParsed;
+          try { bodyParsed = math.parse(body); } catch (_) { return null; }
+          const bodyFree = collectFreeSymbols(bodyParsed);
+          if ([...bodyFree].some(s => s !== 'x')) return null;
+          let derivExpr;
+          try { derivExpr = math.derivative(body, 'x').toString(); } catch (_) { return null; }
+          let parsed;
+          try { parsed = math.parse(derivExpr); } catch (_) { return null; }
+          const dFree = collectFreeSymbols(parsed);
+          if ([...dFree].some(s => s !== 'x')) return null;
+          let ds = derivExpr;
+          if (graphSettings.angle === 'degrees') ds = applyDegMode(ds);
+          return { fn: ds };
+        }
+      }
+    }
+    // ----- Piecewise: y = expr \{condition\} -----
+    const piece = extractPiecewise(trimmed);
+    if (piece) {
+      const range = parseRangeCondition(piece[1]);
+      if (range) {
+        let sp = piece[0].replace(/^\s*y\s*=\s*/i, '');
+        sp = latexToExpr(sp);
+        if (!sp) return null;
+        if (graphSettings.angle === 'degrees') sp = applyDegMode(sp);
+        try { math.parse(sp); } catch (_) { return null; }
+        return { fn: sp, range };
+      }
+      // Condition present but unparseable → reject the whole thing
+      return null;
+    }
+    // ----- Standard "y = f(x)" or bare expression -----
+    let s = trimmed.replace(/^\s*y\s*=\s*/i, '');
+    if (!s) return null;
+    s = latexToExpr(s);
+    if (!s) return null;
+    if (graphSettings.angle === 'degrees') s = applyDegMode(s);
+    let node;
+    try { node = math.parse(s); } catch (e) { return null; }
+    // Auto-promote any free symbols other than `x` into sliders, then
+    // substitute their current values. Re-parse the resulting string.
+    node = autoPromoteAndSubstitute(node, ['x']);
+    s = node.toString();
+    try { node = math.parse(s); } catch (e) { return null; }
+    // Sanity-evaluate at several x to catch:
+    //   • undefined symbols ("y=z+1" → throws on z) → reject
+    //   • constant non-finite ("y=1/0", "y=0/0") → no x ever yields a number → reject
+    // Asymptotic functions (y=1/x, y=ln(x), y=√x) still pass because at
+    // least one sample x produces a finite value.
+    const samples = [-2, -1, -0.5, 0.5, 1, 2];
+    let anyFinite = false;
+    for (const xv of samples) {
+      try {
+        const v = node.evaluate(new Map([['x', xv]]));
+        if (typeof v === 'number' && Number.isFinite(v)) { anyFinite = true; }
+      } catch (e) {
+        return null;
+      }
+    }
+    if (!anyFinite) return null;
+    return { fn: s };
+  }
+
+  // Apply DEG-mode trig rewriting (extracted so we can use it across paths).
+  function applyDegMode(s) {
+    s = s.replace(/\b(asin|acos|atan|acsc|asec|acot)\s*\(([^()]*(?:\([^()]*\)[^()]*)*)\)/g,
+      (_, fn, arg) => `(${fn}(${arg}) * 180 / pi)`);
+    s = s.replace(/(?<!a)\b(sin|cos|tan|csc|sec|cot)\s*\(([^()]*(?:\([^()]*\)[^()]*)*)\)/g,
+      (_, fn, arg) => `${fn}((${arg}) * pi / 180)`);
+    return s;
+  }
+
+  // Add a slider row to the UI for `varName`, defaulting to value 1 on [-10, 10].
+  // If a slider with this name already exists, this is a no-op.
+  function addSliderRow(varName, init) {
+    if (graphState.sliders[varName]) return;
+    const cfg = init || { value: 1, min: -10, max: 10, step: 0.1 };
+    graphState.sliders[varName] = { ...cfg };
+    const id = graphState.nextId++;
+    const row = document.createElement('div');
+    row.className = 'expr-row slider-row';
+    row.dataset.id = id;
+    // varName may contain underscores (e.g. "k_1"). Render as LaTeX-style subscript.
+    const displayName = varName.replace(/_(\w+)/, '<sub>$1</sub>');
+    row.innerHTML = `
+      <div class="slider-label"><span class="slider-var">${displayName}</span> = <span class="slider-val">${cfg.value}</span></div>
+      <input type="range" class="slider-input" min="${cfg.min}" max="${cfg.max}" step="${cfg.step}" value="${cfg.value}" aria-label="Slider for ${varName}" />
+      <button class="expr-delete" aria-label="Remove slider ${varName}">×</button>
+    `;
+    const inputEl = row.querySelector('.slider-input');
+    const valLabel = row.querySelector('.slider-val');
+    inputEl.addEventListener('input', () => {
+      const v = parseFloat(inputEl.value);
+      graphState.sliders[varName].value = v;
+      valLabel.textContent = String(v);
+      renderGraph();
+    });
+    row.querySelector('.expr-delete').addEventListener('click', () => {
+      delete graphState.sliders[varName];
+      graphState.deletedSliders.add(varName);
+      graphState.rows = graphState.rows.filter(r => r.id !== id);
+      row.remove();
+      renderGraph();
+    });
+    document.getElementById('expr-rows').appendChild(row);
+    graphState.rows.push({ id, type: 'slider', varName });
+  }
+
+  // Pick the next unused table subscript (x_1, x_2, ...) so new tables don't collide.
+  function nextTableSubscript() {
+    let n = 1;
+    const taken = new Set();
+    for (const r of graphState.rows) {
+      if (r.type === 'table') { taken.add(r.xName); taken.add(r.yName); }
+    }
+    while (taken.has(`x_${n}`)) n++;
+    return n;
+  }
+
+  // Add a data-table row with editable cells and a CSV-paste shortcut.
+  // initialRows is an optional array of [xString, yString] pairs.
+  function addTableRow(initialRows) {
+    const id = graphState.nextId++;
+    const n = nextTableSubscript();
+    const tableObj = {
+      id, type: 'table',
+      xName: `x_${n}`, yName: `y_${n}`,
+      rows: initialRows ? initialRows.map(r => [String(r[0]), String(r[1])]) : [['', ''], ['', ''], ['', ''], ['', ''], ['', '']]
+    };
+    const rowEl = document.createElement('div');
+    rowEl.className = 'expr-row table-row';
+    rowEl.dataset.id = id;
+
+    const renderBody = () => {
+      rowEl.innerHTML = `
+        <div class="table-header">
+          <span>Table ${n}: <code>${tableObj.xName}</code>, <code>${tableObj.yName}</code></span>
+          <span><button class="table-paste" data-paste="1" type="button">Paste CSV</button> · <button class="expr-delete" aria-label="Remove table">×</button></span>
+        </div>
+        <table>
+          <thead><tr><th>${tableObj.xName}</th><th>${tableObj.yName}</th></tr></thead>
+          <tbody>
+            ${tableObj.rows.map((r, i) => `<tr>
+              <td><input data-r="${i}" data-c="0" value="${r[0]}" /></td>
+              <td><input data-r="${i}" data-c="1" value="${r[1]}" /></td>
+            </tr>`).join('')}
+            <tr><td colspan="2" style="text-align:center;"><button class="table-paste" data-add="1" type="button">+ Add row</button></td></tr>
+          </tbody>
+        </table>
+      `;
+      rowEl.querySelectorAll('input').forEach(inp => {
+        inp.addEventListener('input', () => {
+          const ri = +inp.dataset.r, ci = +inp.dataset.c;
+          tableObj.rows[ri][ci] = inp.value;
+          renderGraph();
+        });
+      });
+      rowEl.querySelectorAll('.table-paste').forEach(b => {
+        if (b.dataset.add) {
+          b.addEventListener('click', () => { tableObj.rows.push(['', '']); renderBody(); renderGraph(); });
+        } else if (b.dataset.paste) {
+          b.addEventListener('click', async () => {
+            try {
+              const text = await navigator.clipboard.readText();
+              const lines = text.trim().split(/\r?\n/).map(line => line.split(/[,\t]/).map(s => s.trim()));
+              if (lines.length && lines.every(r => r.length >= 2)) {
+                tableObj.rows = lines.map(r => [r[0], r[1]]);
+                renderBody();
+                renderGraph();
+              }
+            } catch (_) { /* clipboard denied */ }
+          });
+        }
+      });
+      rowEl.querySelector('.expr-delete').addEventListener('click', () => {
+        graphState.rows = graphState.rows.filter(r => r.id !== id);
+        rowEl.remove();
+        renderGraph();
+      });
+    };
+
+    renderBody();
+    document.getElementById('expr-rows').appendChild(rowEl);
+    graphState.rows.push(tableObj);
+  }
+
+  // Closed-form least squares for y = m*x + b. Returns {m, b, r2} or null.
+  function linearRegression(xs, ys) {
+    const n = xs.length;
+    if (n < 2) return null;
+    let sx = 0, sy = 0, sxx = 0, sxy = 0;
+    for (let i = 0; i < n; i++) { sx += xs[i]; sy += ys[i]; sxx += xs[i] * xs[i]; sxy += xs[i] * ys[i]; }
+    const denom = n * sxx - sx * sx;
+    if (denom === 0) return null;
+    const m = (n * sxy - sx * sy) / denom;
+    const b = (sy - m * sx) / n;
+    const meanY = sy / n;
+    const ssRes = ys.reduce((acc, y, i) => acc + Math.pow(y - (m * xs[i] + b), 2), 0);
+    const ssTot = ys.reduce((acc, y) => acc + Math.pow(y - meanY, 2), 0);
+    const r2 = ssTot === 0 ? 1 : 1 - ssRes / ssTot;
+    return { m, b, r2 };
+  }
+  window.__linReg__ = (pairs) => {
+    const xs = pairs.map(p => p[0]), ys = pairs.map(p => p[1]);
+    const f = linearRegression(xs, ys);
+    if (!f) return 'undefined';
+    return `m=${+f.m.toFixed(6)},b=${+f.b.toFixed(6)}`;
+  };
+
+  // Nelder-Mead nonlinear least squares using fmin. Returns {params, r2, plotFn} or null.
+  // model: math.js expression string; paramNames: free parameter names; indep: independent column name.
+  function nonlinearRegression(xs, ys, modelExpr, paramNames, indep) {
+    if (typeof fmin === 'undefined' || !fmin.nelderMead) return null;
+    let node;
+    try { node = math.parse(modelExpr); } catch (_) { return null; }
+    const compiled = node.compile();
+    const loss = paramVec => {
+      const scope = {};
+      paramNames.forEach((p, i) => { scope[p] = paramVec[i]; });
+      let sse = 0;
+      for (let i = 0; i < xs.length; i++) {
+        scope[indep] = xs[i];
+        let pred;
+        try { pred = compiled.evaluate(scope); } catch (_) { return 1e30; }
+        if (!Number.isFinite(pred)) return 1e30;
+        sse += (pred - ys[i]) * (pred - ys[i]);
+      }
+      return sse;
+    };
+    const init = paramNames.map(() => 1);
+    const result = fmin.nelderMead(loss, init, { maxIterations: 1000 });
+    if (!result || !result.x.every(Number.isFinite)) return null;
+    const params = {};
+    paramNames.forEach((p, i) => { params[p] = result.x[i]; });
+    const meanY = ys.reduce((a, b) => a + b, 0) / ys.length;
+    let ssRes = 0, ssTot = 0;
+    for (let i = 0; i < xs.length; i++) {
+      const scope = { ...params, [indep]: xs[i] };
+      let pred;
+      try { pred = compiled.evaluate(scope); } catch (_) { pred = NaN; }
+      if (Number.isFinite(pred)) ssRes += (pred - ys[i]) ** 2;
+      ssTot += (ys[i] - meanY) ** 2;
+    }
+    const r2 = ssTot === 0 ? 1 : 1 - ssRes / ssTot;
+    // Substitute fitted params into the expression and rename the independent var to x.
+    const subst = node.transform(n => {
+      if (n.isSymbolNode && params.hasOwnProperty(n.name)) return new math.ConstantNode(params[n.name]);
+      if (n.isSymbolNode && n.name === indep) return new math.SymbolNode('x');
+      return n;
+    }).toString();
+    return { params, r2, plotFn: subst };
+  }
+  window.__nonlinReg__ = (pairs, model, paramNames) => {
+    const xs = pairs.map(p => p[0]), ys = pairs.map(p => p[1]);
+    const f = nonlinearRegression(xs, ys, model, paramNames, 'x');
+    if (!f) return 'undefined';
+    return paramNames.map(p => `${p}=${+f.params[p].toFixed(6)}`).join(',');
+  };
+
+  // Parse "y_n ~ expression" and fit. Updates `resultEl` with parameter summary.
+  // Returns { plotFn, params, r2 } when a fit is produced, otherwise null.
+  function computeRegression(latex, resultEl) {
+    if (!latex || !latex.trim()) { resultEl.textContent = ''; return null; }
+    const tildeRe = /^\s*([xy])_\{?(\d+)\}?\s*(?:\\sim|~)\s*(.+)$/;
+    const tm = tildeRe.exec(latex);
+    if (!tm) { resultEl.textContent = 'Use y_n ~ expression'; return null; }
+    const depName = `${tm[1]}_${tm[2]}`;
+    const rhs = latexToExpr(tm[3]);
+    if (!rhs) { resultEl.textContent = 'Parse error'; return null; }
+    const tbl = graphState.rows.find(r => r.type === 'table' && (r.xName === depName || r.yName === depName));
+    if (!tbl) { resultEl.textContent = `Unknown column ${depName}`; return null; }
+    const indepName = tbl.xName === depName ? tbl.yName : tbl.xName;
+    const xs = [], ys = [];
+    for (const r of tbl.rows) {
+      const xv = parseFloat(tbl.xName === depName ? r[1] : r[0]);
+      const yv = parseFloat(tbl.xName === depName ? r[0] : r[1]);
+      if (Number.isFinite(xv) && Number.isFinite(yv)) { xs.push(xv); ys.push(yv); }
+    }
+    if (xs.length < 2) { resultEl.textContent = 'Need ≥2 data points'; return null; }
+    let node;
+    try { node = math.parse(rhs); } catch (_) { resultEl.textContent = 'Parse error'; return null; }
+    const params = [...collectFreeSymbols(node)].filter(s => s !== indepName);
+    if (params.length === 0) { resultEl.textContent = 'No free parameters'; return null; }
+    // Linearity probe: second derivative wrt each param ≡ 0
+    const isLinear = params.every(p => {
+      try {
+        const d2 = math.derivative(math.derivative(rhs, p), p).toString().replace(/\s/g, '');
+        return d2 === '0';
+      } catch (_) { return false; }
+    });
+    if (isLinear && params.length === 2) {
+      const fit = linearRegression(xs, ys);
+      if (!fit) { resultEl.textContent = 'Degenerate'; return null; }
+      // Determine slope vs intercept by whether ∂(rhs)/∂p depends on indep
+      const dependsOnIndep = p => {
+        try {
+          const d = math.derivative(rhs, p);
+          const v0 = d.evaluate({ [indepName]: 0 });
+          const v1 = d.evaluate({ [indepName]: 1 });
+          return Math.abs(v1 - v0) > 1e-10;
+        } catch (_) { return false; }
+      };
+      const bindings = {};
+      for (const p of params) bindings[p] = dependsOnIndep(p) ? fit.m : fit.b;
+      resultEl.textContent = params.map(p => `${p}=${bindings[p].toPrecision(4)}`).join(', ') + `, R²=${fit.r2.toFixed(4)}`;
+      const subst = node.transform(n => {
+        if (n.isSymbolNode && bindings.hasOwnProperty(n.name)) return new math.ConstantNode(bindings[n.name]);
+        if (n.isSymbolNode && n.name === indepName) return new math.SymbolNode('x');
+        return n;
+      }).toString();
+      return { plotFn: subst, params: bindings, r2: fit.r2 };
+    }
+    // Nonlinear path
+    const fit = nonlinearRegression(xs, ys, rhs, params, indepName);
+    if (!fit) { resultEl.textContent = 'Failed to fit'; return null; }
+    resultEl.textContent = params.map(p => `${p}=${fit.params[p].toPrecision(4)}`).join(', ') + `, R²=${fit.r2.toFixed(4)}`;
+    return fit;
+  }
+
+  // Add a regression row whose math-field accepts `y_n ~ model` syntax.
+  function addRegressionRow() {
+    const id = graphState.nextId++;
+    const color = '#138a3d';
+    const rowEl = document.createElement('div');
+    rowEl.className = 'expr-row regression-row';
+    rowEl.dataset.id = id;
+    rowEl.innerHTML = `
+      <div class="expr-color" style="background:${color}">
+        <span class="sr-only">Regression</span>
+        <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M3 17q3-10 9-10t9 10"/></svg>
+      </div>
+      <math-field class="expr-field" aria-label="Regression model"></math-field>
+      <div class="reg-result"></div>
+      <button class="expr-delete" aria-label="Remove regression">×</button>
+    `;
+    const mf = rowEl.querySelector('math-field');
+    mf.mathVirtualKeyboardPolicy = 'manual';
+    const resultEl = rowEl.querySelector('.reg-result');
+    mf.addEventListener('focus', () => { graphState.focusedMf = mf; });
+    mf.addEventListener('input', () => {
+      const rowObj = graphState.rows.find(r => r.id === id);
+      if (rowObj) rowObj.fit = computeRegression(mf.value, resultEl);
+      renderGraph();
+    });
+    rowEl.querySelector('.expr-delete').addEventListener('click', () => {
+      graphState.rows = graphState.rows.filter(r => r.id !== id);
+      rowEl.remove();
+      renderGraph();
+    });
+    document.getElementById('expr-rows').appendChild(rowEl);
+    graphState.rows.push({ id, type: 'regression', mathfield: mf, color, fit: null });
+    mf.focus();
+  }
+
+  // Look up a numeric column array from any defined table by its x_n / y_n name.
+  function getTableColumn(name) {
+    for (const r of graphState.rows) {
+      if (r.type === 'table') {
+        if (r.xName === name) return r.rows.map(rr => parseFloat(rr[0])).map(v => Number.isFinite(v) ? v : null);
+        if (r.yName === name) return r.rows.map(rr => parseFloat(rr[1])).map(v => Number.isFinite(v) ? v : null);
+      }
+    }
+    return null;
+  }
+
+  // Substitute every SymbolNode whose name matches an existing slider with a
+  // numeric ConstantNode holding that slider's current value. Returns the new
+  // node (or the input unchanged if there are no matching sliders).
+  function substituteSlidersNode(node) {
+    return node.transform(n => {
+      if (n.isSymbolNode && graphState.sliders[n.name]) {
+        return new math.ConstantNode(graphState.sliders[n.name].value);
+      }
+      return n;
+    });
+  }
+
+  // For every free symbol in `node` not in `scopeVars`, create a slider with
+  // default value 1, then return the slider-substituted node. Skip symbols
+  // that match an existing table column — those are arrays, not free scalars.
+  // Also skip `y` (always the dependent variable, never a free parameter).
+  function autoPromoteAndSubstitute(node, scopeVars) {
+    const free = collectFreeSymbols(node);
+    for (const name of free) {
+      if (scopeVars.includes(name)) continue;
+      if (name === 'y') continue;
+      if (getTableColumn(name) !== null) continue;
+      if (graphState.deletedSliders.has(name)) continue;
+      if (!graphState.sliders[name]) addSliderRow(name);
+    }
+    return substituteSlidersNode(node);
+  }
+
+  // Collect "free" symbol names from a parsed math.js node — skip function-name
+  // slots (e.g. the `cos` in `cos(t)`) and math.js built-ins (sqrt, log, etc.).
+  function collectFreeSymbols(node) {
+    const out = new Set();
+    const fnNames = new Set();
+    node.traverse((n) => {
+      if (n.isFunctionNode && n.fn && n.fn.name) fnNames.add(n.fn.name);
+    });
+    node.traverse((n) => {
+      if (!n.isSymbolNode) return;
+      if (fnNames.has(n.name)) return;
+      // Built-in math.js scope values (constants/functions) — skip
+      try {
+        const v = math.evaluate(n.name);
+        if (typeof v === 'function' || typeof v === 'number') return;
+      } catch (_) { /* not a builtin → it's free */ }
+      out.add(n.name);
+    });
+    return out;
+  }
+
+  // Extract a piecewise restriction from a LaTeX string. Looks for `\{...\}`
+  // at the very end where the outer braces are escaped (so `y=x^{2}\{x>0\}`
+  // gives ["y=x^{2}", "x>0"]). Returns null if no escaped trailing brace pair.
+  function extractPiecewise(latex) {
+    if (!latex.endsWith('\\}')) return null;
+    let depth = 1;
+    let i = latex.length - 2;
+    while (i > 0 && depth > 0) {
+      i--;
+      if (latex[i] === '\\' && latex[i + 1] === '}') { depth++; i--; continue; }
+      if (latex[i] === '\\' && latex[i + 1] === '{') { depth--; continue; }
+    }
+    if (depth !== 0) return null;
+    const condStart = i + 2;
+    const condEnd = latex.length - 2;
+    if (condStart >= condEnd) return null;
+    return [latex.slice(0, i).trim(), latex.slice(condStart, condEnd).trim()];
+  }
+
+  // Parse "x > 0", "-2 < x < 5", "x >= 1 and x < 4", "x \\le \\pi" → [lo, hi]
+  // Bounds evaluated via math.evaluate so \pi, sqrt(2), etc. are accepted.
+  function parseRangeCondition(cond) {
+    let s = cond
+      .replace(/\\text\s*\{\s*and\s*\}/gi, ' and ')
+      .replace(/\\le\b/g, '<=').replace(/\\ge\b/g, '>=')
+      .replace(/\\leq\b/g, '<=').replace(/\\geq\b/g, '>=')
+      .replace(/\\pi\b/g, 'pi').replace(/\\cdot\b/g, '*')
+      .replace(/\s+/g, ' ').trim();
+    const parts = s.split(/\s+and\s+/i);
+    let lo = -Infinity, hi = Infinity;
+    const evalBound = e => { try { const v = math.evaluate(e); return typeof v === 'number' ? v : NaN; } catch (_) { return NaN; } };
+    for (const p of parts) {
+      let m;
+      if ((m = /^\s*(.+?)\s*(<=|<)\s*x\s*(<=|<)\s*(.+?)\s*$/.exec(p))) {
+        const a = evalBound(m[1]), b = evalBound(m[4]);
+        if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
+        lo = Math.max(lo, a); hi = Math.min(hi, b);
+      } else if ((m = /^\s*x\s*(<=|>=|<|>)\s*(.+?)\s*$/.exec(p))) {
+        const v = evalBound(m[2]);
+        if (!Number.isFinite(v)) return null;
+        if (m[1] === '<' || m[1] === '<=') hi = Math.min(hi, v);
+        else lo = Math.max(lo, v);
+      } else if ((m = /^\s*(.+?)\s*(<=|>=|<|>)\s*x\s*$/.exec(p))) {
+        const v = evalBound(m[1]);
+        if (!Number.isFinite(v)) return null;
+        if (m[2] === '<' || m[2] === '<=') lo = Math.max(lo, v);
+        else hi = Math.min(hi, v);
+      } else {
+        return null;
+      }
+    }
+    if (lo >= hi) return null;
+    return [lo, hi];
+  }
+
+  // SR-only summary describing what's plotted. Re-set on every render so the
+  // figcaption stays in sync with the visible graph.
+  function updateGraphCaption(plottedData) {
+    const cap = document.getElementById('graph-caption');
+    if (!cap) return;
+    const x = `x from ${graphSettings.xMin} to ${graphSettings.xMax}`;
+    const y = `y from ${graphSettings.yMin} to ${graphSettings.yMax}`;
+    if (!plottedData || plottedData.length === 0) {
+      cap.textContent = `Empty graph. Visible domain: ${x}, ${y}.`;
+      return;
+    }
+    const exprs = graphState.rows
+      .map(r => r.mathfield?.value || '')
+      .filter(Boolean)
+      .map(latexToSpeech);
+    const head = exprs.length === 1
+      ? `Plot of ${exprs[0]}.`
+      : `Plot of ${exprs.length} functions: ${exprs.join('; ')}.`;
+    cap.textContent = `${head} Visible domain: ${x}, ${y}.`;
+  }
+
+  // SR-only sampled table — one row per (x, y) sample per plotted function.
+  // Replaces the table contents each render. 21 samples gives enough fidelity
+  // for screen-reader exploration without overwhelming the output.
+  function updateGraphDataTable() {
+    const host = document.getElementById('graph-data-table');
+    if (!host) return;
+    host.innerHTML = '';
+    const SAMPLES = 21;
+    const xMin = graphSettings.xMin, xMax = graphSettings.xMax;
+    const step = (xMax - xMin) / (SAMPLES - 1);
+    const exprs = graphState.rows
+      .map(r => ({ latex: r.mathfield?.value || '', spec: latexToGraphableFn(r.mathfield?.value || '') }))
+      .filter(e => e.spec && e.spec.fn && !e.spec.fnType);
+    if (exprs.length === 0) { host.textContent = 'No functions plotted.'; return; }
+    exprs.forEach((e, i) => {
+      const fig = document.createElement('div');
+      const heading = document.createElement('div');
+      heading.textContent = `Function ${i + 1}: ${latexToSpeech(e.latex)}`;
+      fig.appendChild(heading);
+      const table = document.createElement('table');
+      const thead = document.createElement('thead');
+      thead.innerHTML = '<tr><th scope="col">x</th><th scope="col">y</th></tr>';
+      table.appendChild(thead);
+      const tbody = document.createElement('tbody');
+      let node;
+      try { node = math.parse(e.spec.fn); } catch (_) { return; }
+      const compiled = node.compile();
+      for (let k = 0; k < SAMPLES; k++) {
+        const x = xMin + k * step;
+        let y;
+        try { y = compiled.evaluate({ x }); } catch (_) { y = NaN; }
+        const tr = document.createElement('tr');
+        const tdX = document.createElement('td');
+        const tdY = document.createElement('td');
+        tdX.textContent = x.toPrecision(4);
+        tdY.textContent = Number.isFinite(y) ? Number(y).toPrecision(4) : 'undefined';
+        tr.appendChild(tdX); tr.appendChild(tdY);
+        tbody.appendChild(tr);
+      }
+      table.appendChild(tbody);
+      fig.appendChild(table);
+      host.appendChild(fig);
+    });
+  }
+
+  function renderGraph() {
+    let graphEl = document.getElementById('graph');
+    if (!graphEl || typeof functionPlot !== 'function') return;
+    // Only render when the graphing view is actually visible (function-plot
+    // needs a non-zero size to compute its viewport)
+    if (!document.getElementById('view-graphing').classList.contains('active')) return;
+    const data = [];
+    // Snapshot rows because the dispatcher may auto-promote sliders (which
+    // push new rows onto graphState.rows mid-iteration).
+    const rowsSnapshot = [...graphState.rows];
+    for (const r of rowsSnapshot) {
+      if (r.type === 'regression') {
+        if (r.fit && r.fit.plotFn) {
+          data.push({ color: r.color, fn: r.fit.plotFn, graphType: 'polyline' });
+        }
+        continue;
+      }
+      // Skip slider and table rows — they don't plot directly
+      if (r.type === 'slider' || r.type === 'table') continue;
+      const spec = latexToGraphableFn(r.mathfield?.value || '');
+      if (spec) {
+        // For implicit (and other non-linear) fnTypes, omit graphType — function-plot
+        // chooses the right renderer based on fnType alone, and supplying both confuses it.
+        const entry = { color: r.color, ...spec };
+        if (!spec.fnType) entry.graphType = 'polyline';
+        data.push(entry);
+      }
+    }
+    // Replace the graph element with a fresh node. function-plot caches chart
+    // state by element reference, so clearing innerHTML alone isn't enough —
+    // pan/zoom and tick-scale state can persist across calls. Replacing the
+    // node forces a clean re-init every render.
+    const freshGraphEl = document.createElement('div');
+    freshGraphEl.id = 'graph';
+    freshGraphEl.setAttribute('role', 'img');
+    freshGraphEl.setAttribute('aria-labelledby', 'graph-caption');
+    graphEl.parentNode.replaceChild(freshGraphEl, graphEl);
+    graphEl = freshGraphEl;
+    updateGraphCaption(data);
+    updateGraphDataTable();
+    const cfg = {
+      target: '#graph',
+      grid: graphSettings.grid,
+      width: graphEl.clientWidth || 800,
+      height: graphEl.clientHeight || 500,
+      xAxis: { domain: [graphSettings.xMin, graphSettings.xMax], label: graphSettings.xLabel || undefined },
+      yAxis: { domain: [graphSettings.yMin, graphSettings.yMax], label: graphSettings.yLabel || undefined },
+      data
+    };
+    let chart = null;
+    try {
+      chart = functionPlot(cfg);
+    } catch (e) {
+      try { chart = functionPlot({ ...cfg, data: [] }); } catch (_) {}
+    }
+    // Wire pan/zoom: as the user pans or scroll-zooms the graph, update
+    // graphSettings and the settings panel inputs to reflect the new domain.
+    if (chart && typeof chart.on === 'function') {
+      const sync = () => syncZoomToSettings(chart);
+      chart.on('all:zoom', sync);
+      chart.on('all:zoom:end', sync);
+    }
+    // Apply custom axis tick spacing if step settings are set.
+    if (graphSettings.xStep) applyCustomTicks('x', [graphSettings.xMin, graphSettings.xMax], graphSettings.xStep);
+    if (graphSettings.yStep) applyCustomTicks('y', [graphSettings.yMin, graphSettings.yMax], graphSettings.yStep);
+    // Apply visibility settings via CSS classes on the graph container.
+    graphEl.classList.toggle('hide-x-axis', !graphSettings.showXAxis);
+    graphEl.classList.toggle('hide-y-axis', !graphSettings.showYAxis);
+    graphEl.classList.toggle('hide-axis-numbers', !graphSettings.axisNumbers);
+    // Add minor gridlines and axis arrows as SVG overlays.
+    applyMinorGridlines(graphSettings.minorGridlines && graphSettings.grid);
+    applyAxisArrows(graphSettings.arrows);
+  }
+
+  // Add subtle minor gridlines halfway between each pair of major ticks.
+  // (Reads the major tick positions; adds new <g class="tick minor-grid-line">
+  // elements into the same axis groups so they live in the same coordinate
+  // space and inherit panning if the chart redraws.)
+  function applyMinorGridlines(enabled) {
+    const svg = document.querySelector('#graph svg');
+    if (!svg) return;
+    svg.querySelectorAll('.minor-grid-line').forEach(el => el.remove());
+    if (!enabled) return;
+    ['x', 'y'].forEach(axis => {
+      const axisG = svg.querySelector(`.${axis}.axis`);
+      if (!axisG) return;
+      const ticks = Array.from(axisG.querySelectorAll('.tick'));
+      if (ticks.length < 2) return;
+      // Use the first major tick's grid line length so minor lines match.
+      const refLine = ticks[0].querySelector('line');
+      if (!refLine) return;
+      const lineAttr = axis === 'x' ? 'y2' : 'x2';
+      const lineLen = refLine.getAttribute(lineAttr);
+      if (!lineLen || lineLen === '0') return;
+      const parseTransform = t => {
+        const m = (t.getAttribute('transform') || '').match(/translate\(([-\d.]+)[,\s]+([-\d.]+)\)/);
+        return m ? { x: parseFloat(m[1]), y: parseFloat(m[2]) } : null;
+      };
+      for (let i = 0; i < ticks.length - 1; i++) {
+        const p0 = parseTransform(ticks[i]);
+        const p1 = parseTransform(ticks[i + 1]);
+        if (!p0 || !p1) continue;
+        const midX = (p0.x + p1.x) / 2;
+        const midY = (p0.y + p1.y) / 2;
+        const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        g.setAttribute('class', 'tick minor-grid-line');
+        g.setAttribute('transform', `translate(${midX},${midY})`);
+        const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        line.setAttribute('stroke', '#000');
+        line.setAttribute('stroke-opacity', '0.06');
+        line.setAttribute(lineAttr, lineLen);
+        g.appendChild(line);
+        axisG.appendChild(g);
+      }
+    });
+  }
+
+  // Add arrowheads at the ends of the x- and y-axis lines.
+  // d3-axis paths zigzag (tick + line + tick), so marker-end lands on the
+  // wrong vertex. Draw explicit small triangles at the correct positions.
+  function applyAxisArrows(enabled) {
+    const svg = document.querySelector('#graph svg');
+    if (!svg) return;
+    svg.querySelectorAll('.axis-arrow').forEach(el => el.remove());
+    if (!enabled) return;
+    // Extract chart bounds from the x-axis path "M0,-264V0H662V-264"
+    // → horizontal axis spans x=0 → x=W where W = the H<W> coord.
+    const xPath = svg.querySelector('.x.axis path.domain');
+    const yPath = svg.querySelector('.y.axis path.domain');
+    if (!xPath || !yPath) return;
+    const xMatch = xPath.getAttribute('d').match(/H([-\d.]+)/);
+    const yMatch = yPath.getAttribute('d').match(/M([-\d.]+),([-\d.]+)/);
+    const W = xMatch ? parseFloat(xMatch[1]) : 0;
+    const H = yMatch ? parseFloat(yMatch[2]) : 0;
+    const xAxisG = svg.querySelector('.x.axis');
+    const yAxisG = svg.querySelector('.y.axis');
+    const triangle = (points, color) => {
+      const t = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+      t.setAttribute('class', 'axis-arrow');
+      t.setAttribute('points', points);
+      t.setAttribute('fill', color || '#444');
+      return t;
+    };
+    // x-axis: arrow at right end (x=W, y=0), pointing right
+    if (xAxisG) {
+      xAxisG.appendChild(triangle(`${W},-4 ${W + 8},0 ${W},4`));
+    }
+    // y-axis: arrow at top end (x=0, y=0 in y-axis local coords), pointing up.
+    // The y-axis path starts at (W, H) and ends at (W, 0) — but its OWN
+    // transform places (0,0) at the visual top of the axis. The y-axis group
+    // is positioned with its origin at the *left* of the chart, so y=0 there
+    // corresponds to the top of the visible chart area.
+    if (yAxisG) {
+      yAxisG.appendChild(triangle(`-4,0 0,-8 4,0`));
+    }
+  }
+
+  // Mirror the user's pan/zoom into graphSettings + the input fields so they
+  // stay in sync with what's actually visible. Re-applies custom step ticks
+  // for the new domain. Does NOT call renderGraph (would loop).
+  let suppressInputSync = false;
+  function syncZoomToSettings(chart) {
+    if (!chart || !chart.meta) return;
+    const xDom = chart.meta.xScale && chart.meta.xScale.domain && chart.meta.xScale.domain();
+    const yDom = chart.meta.yScale && chart.meta.yScale.domain && chart.meta.yScale.domain();
+    suppressInputSync = true;
+    const setInput = (id, v) => {
+      const el = document.getElementById(id);
+      if (el) el.value = formatBound(v);
+    };
+    if (xDom && xDom.length === 2 && Number.isFinite(xDom[0]) && Number.isFinite(xDom[1])) {
+      graphSettings.xMin = xDom[0]; graphSettings.xMax = xDom[1];
+      setInput('gs-xmin', xDom[0]); setInput('gs-xmax', xDom[1]);
+    }
+    if (yDom && yDom.length === 2 && Number.isFinite(yDom[0]) && Number.isFinite(yDom[1])) {
+      graphSettings.yMin = yDom[0]; graphSettings.yMax = yDom[1];
+      setInput('gs-ymin', yDom[0]); setInput('gs-ymax', yDom[1]);
+    }
+    // Re-apply custom step ticks for the new visible domain.
+    if (graphSettings.xStep) applyCustomTicks('x', [graphSettings.xMin, graphSettings.xMax], graphSettings.xStep);
+    if (graphSettings.yStep) applyCustomTicks('y', [graphSettings.yMin, graphSettings.yMax], graphSettings.yStep);
+    suppressInputSync = false;
+  }
+  function formatBound(v) {
+    if (Number.isInteger(v)) return String(v);
+    // Trim to ~4 sig figs to keep the field readable while panning.
+    return parseFloat(v.toPrecision(4)).toString();
+  }
+
+  // Rewrite axis ticks for an explicit step. We compute new tick positions
+  // by mapping domain endpoints to the SVG x-range of the existing axis line.
+  function applyCustomTicks(axis, domain, step) {
+    if (!step || step <= 0) return;
+    const axisG = document.querySelector(`#graph svg .${axis}.axis`);
+    if (!axisG) return;
+    const ticks = Array.from(axisG.querySelectorAll('.tick'));
+    if (ticks.length < 1) return;
+    // Read existing tick value & position to establish the px↔value scale.
+    const parseVal = t => {
+      const txt = (t.querySelector('text')?.textContent || '').replace(/[−–]/g, '-');
+      return parseFloat(txt);
+    };
+    const parsePos = t => {
+      const m = (t.getAttribute('transform') || '').match(/translate\(([-\d.]+)[,\s]+([-\d.]+)\)/);
+      return m ? { x: parseFloat(m[1]), y: parseFloat(m[2]) } : { x: 0, y: 0 };
+    };
+    // If only one tick, can't infer scale — bail.
+    if (ticks.length < 2) return;
+    const v0 = parseVal(ticks[0]), p0 = parsePos(ticks[0]);
+    const v1 = parseVal(ticks[ticks.length - 1]), p1 = parsePos(ticks[ticks.length - 1]);
+    if (!Number.isFinite(v0) || !Number.isFinite(v1) || v0 === v1) return;
+    const isX = axis === 'x';
+    const pxPerUnit = ((isX ? p1.x : p1.y) - (isX ? p0.x : p0.y)) / (v1 - v0);
+    const basePx = isX ? p0.x : p0.y;
+    const valToPx = v => basePx + (v - v0) * pxPerUnit;
+    // Generate new tick values from domain & step.
+    const [lo, hi] = domain;
+    const start = Math.ceil(lo / step) * step;
+    const newValues = [];
+    for (let v = start; v <= hi + 1e-9; v = parseFloat((v + step).toPrecision(12))) {
+      newValues.push(parseFloat(v.toPrecision(12)));
+      if (newValues.length > 500) break; // safety
+    }
+    if (newValues.length === 0) return;
+    const template = ticks[0].cloneNode(true);
+    ticks.forEach(t => t.remove());
+    const unicodeMinus = s => String(s).replace(/^-/, '−');
+    newValues.forEach(v => {
+      const t = template.cloneNode(true);
+      t.setAttribute('transform', isX ? `translate(${valToPx(v)},0)` : `translate(0,${valToPx(v)})`);
+      const text = t.querySelector('text');
+      if (text) text.textContent = unicodeMinus(v);
+      axisG.appendChild(t);
+    });
+  }
+
+  function wireGraphSettings() {
+    const gear = document.getElementById('graph-gear');
+    const panel = document.getElementById('graph-settings');
+    if (!gear || !panel) return;
+
+    const toggleOpen = (force) => {
+      const wasOpen = panel.classList.contains('open');
+      const open = typeof force === 'boolean' ? force : !wasOpen;
+      if (open === wasOpen) return;
+      panel.classList.toggle('open', open);
+      gear.setAttribute('aria-expanded', String(open));
+      if (open) {
+        // Move focus into the panel so keyboard users land inside the dialog.
+        const first = panel.querySelector('input, button');
+        if (first) first.focus();
+      } else if (document.activeElement && panel.contains(document.activeElement)) {
+        // Return focus to the gear when closing if focus was inside the panel.
+        gear.focus();
+      }
+    };
+    gear.addEventListener('click', (e) => { e.stopPropagation(); toggleOpen(); });
+    // Close when clicking outside the panel
+    document.addEventListener('click', (e) => {
+      if (!panel.classList.contains('open')) return;
+      if (panel.contains(e.target) || gear.contains(e.target)) return;
+      toggleOpen(false);
+    });
+    // Escape to close
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && panel.classList.contains('open')) toggleOpen(false);
+    });
+
+    // Wired controls
+    const grid    = document.getElementById('gs-grid');
+    const xmin    = document.getElementById('gs-xmin');
+    const xmax    = document.getElementById('gs-xmax');
+    const ymin    = document.getElementById('gs-ymin');
+    const ymax    = document.getElementById('gs-ymax');
+    const xlabel  = document.getElementById('gs-xlabel');
+    const ylabel  = document.getElementById('gs-ylabel');
+
+    grid.addEventListener('change',  () => { graphSettings.grid = grid.checked; renderGraph(); });
+    // Newly wired checkboxes / radio toggles
+    const cb = (id, key) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.addEventListener('change', () => { graphSettings[key] = el.checked; renderGraph(); });
+    };
+    cb('gs-xaxis', 'showXAxis');
+    cb('gs-yaxis', 'showYAxis');
+    cb('gs-axis-numbers', 'axisNumbers');
+    cb('gs-minor', 'minorGridlines');
+    cb('gs-arrows', 'arrows');
+    const numIn = (input, key) => input.addEventListener('input', () => {
+      const v = parseFloat(input.value);
+      if (Number.isFinite(v)) { graphSettings[key] = v; renderGraph(); }
+    });
+    numIn(xmin, 'xMin'); numIn(xmax, 'xMax');
+    numIn(ymin, 'yMin'); numIn(ymax, 'yMax');
+    xlabel.addEventListener('input', () => { graphSettings.xLabel = xlabel.value; renderGraph(); });
+    ylabel.addEventListener('input', () => { graphSettings.yLabel = ylabel.value; renderGraph(); });
+
+    // Step inputs — empty/invalid → null = use function-plot's auto ticks.
+    const xstep = document.getElementById('gs-xstep');
+    const ystep = document.getElementById('gs-ystep');
+    const stepIn = (input, key) => input.addEventListener('input', () => {
+      const v = parseFloat(input.value);
+      graphSettings[key] = (Number.isFinite(v) && v > 0) ? v : null;
+      renderGraph();
+    });
+    stepIn(xstep, 'xStep'); stepIn(ystep, 'yStep');
+
+    // Cartesian/polar mini-button toggle (visual only)
+    const cart = document.getElementById('gs-grid-cart');
+    const polar = document.getElementById('gs-grid-polar');
+    const setGridMode = (active, inactive) => {
+      active.classList.add('active');
+      active.setAttribute('aria-pressed', 'true');
+      inactive.classList.remove('active');
+      inactive.setAttribute('aria-pressed', 'false');
+    };
+    cart.addEventListener('click', () => setGridMode(cart, polar));
+    // Polar requires a non-Cartesian plotter — function-plot doesn't support it.
+    // Click is a no-op; the button is visually disabled with a "Soon" badge.
+    polar.addEventListener('click', e => e.preventDefault());
+    if (!polar.querySelector('.fn-badge')) {
+      const badge = document.createElement('span');
+      badge.className = 'fn-badge';
+      badge.textContent = 'Soon';
+      badge.style.cssText = 'position:absolute;top:-6px;right:-6px;font-size:8px;padding:1px 4px;line-height:1';
+      polar.style.position = 'relative';
+      polar.appendChild(badge);
+    }
+
+    // Radians/Degrees pill — rewrites trig args before evaluation when in degrees.
+    panel.querySelectorAll('.gs-angle-toggle button').forEach(b => {
+      b.addEventListener('click', () => {
+        panel.querySelectorAll('.gs-angle-toggle button').forEach(x => {
+          const active = x === b;
+          x.classList.toggle('active', active);
+          x.setAttribute('aria-pressed', String(active));
+        });
+        graphSettings.angle = b.dataset.angle;
+        renderGraph();
+      });
+    });
+
+  }
+
+  // Re-render on window resize
+  window.addEventListener('resize', () => {
+    if (document.getElementById('view-graphing')?.classList.contains('active')) renderGraph();
+  });
+
+  function wireTabs() {
+    document.querySelectorAll('.tab').forEach(t => {
+      t.addEventListener('click', () => {
+        document.querySelectorAll('.tab').forEach(x => {
+          const active = x === t;
+          x.classList.toggle('active', active);
+          x.setAttribute('aria-selected', String(active));
+        });
+        document.querySelectorAll('.panel').forEach(p => {
+          p.classList.remove('active');
+          p.style.display = '';
+        });
+        document.querySelector(`.panel[data-panel="${t.dataset.tab}"]`).classList.add('active');
+      });
+    });
+  }
+
+  function wireAngle() {
+    document.querySelectorAll('.angle button').forEach(b => {
+      b.addEventListener('click', () => {
+        document.querySelectorAll('.angle button').forEach(x => {
+          const active = x === b;
+          x.classList.toggle('active', active);
+          x.setAttribute('aria-pressed', String(active));
+        });
+        angleMode = b.dataset.angle;
+      });
+    });
+  }
+
+  // Function names that have native LaTeX commands (\sin, \cos, etc.)
+  const NATIVE_LATEX_FNS = new Set([
+    'sin','cos','tan','arcsin','arccos','arctan','asin','acos','atan',
+    'ln','log','exp','sinh','cosh','tanh'
+  ]);
+
+  let shiftOn = false;
+
+  function wireKeypad() {
+    document.querySelectorAll('.key').forEach(k => {
+      k.addEventListener('click', (e) => {
+        e.preventDefault();
+        if (k.classList.contains('is-disabled')) return;
+        mf.focus();
+        const insert = k.dataset.insert;
+        const cmd = k.dataset.cmd;
+        const fn = k.dataset.fn;
+        const letter = k.dataset.letter;
+        const latex = k.dataset.latex;
+        // Smart-exit a placeholder template when the next key is an operator
+        // (fixes the "x^{2+3x}" bug — see handleGraphKey for the same logic).
+        if (_templateActive.get(mf) && insert !== undefined && isOperatorInsert(insert)) {
+          try { mf.executeCommand('moveAfterParent'); } catch (e2) {}
+          _templateActive.set(mf, false);
+        }
+        if (letter) {
+          const ch = shiftOn ? letter.toUpperCase() : letter;
+          mf.executeCommand(['insert', ch]);
+          if (shiftOn) { shiftOn = false; updateShiftUI(); }
+        } else if (insert !== undefined) {
+          mf.executeCommand(['insert', insert]);
+        } else if (latex) {
+          mf.executeCommand(['insert', latex, { selectionMode: 'placeholder' }]);
+        } else if (fn) {
+          const body = NATIVE_LATEX_FNS.has(fn)
+            ? `\\${fn}\\left(#0\\right)`
+            : `\\operatorname{${fn}}\\left(#0\\right)`;
+          mf.executeCommand(['insert', body, { selectionMode: 'placeholder' }]);
+        } else if (cmd) {
+          handleCmd(cmd);
+        }
+        // Update template-active flag for next keystroke
+        const inserted = latex !== undefined ? latex
+                       : fn !== undefined ? `\\fn\\left(#0\\right)`  // sentinel marking fn-template
+                       : null;
+        if (isTemplateLatex(inserted)) _templateActive.set(mf, true);
+        else if (insert !== undefined && isOperatorInsert(insert)) _templateActive.set(mf, false);
+      });
+    });
+  }
+
+  function updateShiftUI() {
+    const panel = document.querySelector('.panel[data-panel="abc"]');
+    if (panel) panel.classList.toggle('shift-on', shiftOn);
+    const shift = document.getElementById('abc-shift');
+    if (shift) shift.setAttribute('aria-pressed', String(shiftOn));
+  }
+
+  function handleCmd(cmd) {
+    switch (cmd) {
+      case 'frac':
+        mf.executeCommand(['insert', '\\frac{#0}{#?}', { selectionMode: 'placeholder' }]);
+        break;
+      case 'sqrt':
+        mf.executeCommand(['insert', '\\sqrt{#0}', { selectionMode: 'placeholder' }]);
+        break;
+      case 'nthroot':
+        mf.executeCommand(['insert', '\\sqrt[#?]{#0}', { selectionMode: 'placeholder' }]);
+        break;
+      case 'abs':
+        mf.executeCommand(['insert', '\\left|#0\\right|', { selectionMode: 'placeholder' }]);
+        break;
+      case 'left':      mf.executeCommand('moveToPreviousChar'); break;
+      case 'right':     mf.executeCommand('moveToNextChar'); break;
+      case 'backspace': mf.executeCommand('deleteBackward'); break;
+      case 'ans':
+        if (lastAnswer !== null) mf.executeCommand(['insert', String(lastAnswer)]);
+        break;
+      case 'exp':
+        mf.executeCommand(['insert', 'e^{#0}', { selectionMode: 'placeholder' }]);
+        break;
+      case 'shift':
+        shiftOn = !shiftOn;
+        updateShiftUI();
+        break;
+      case 'enter':     evaluate(); break;
+    }
+  }
+
+  function wireToolbar() {
+    document.getElementById('undo').addEventListener('click', () => { mf.focus(); mf.executeCommand('undo'); });
+    document.getElementById('redo').addEventListener('click', () => { mf.focus(); mf.executeCommand('redo'); });
+    document.getElementById('clear-all').addEventListener('click', () => {
+      entries.length = 0;
+      mf.value = '';
+      renderHistory();
+      mf.focus();
+    });
+  }
+
+  function wireKeyboard() {
+    mf.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); evaluate(); }
+    });
+    mf.addEventListener('input', () => {
+      updateClearAllVisibility();
+      updateOperandRequiredKeys();
+      updateInputFracToggle();
+    });
+    const inputToggle = document.getElementById('input-frac-toggle');
+    if (inputToggle) inputToggle.addEventListener('click', onInputFracToggleClick);
+  }
+
+  // Show the input toggle when the current math-field value is convertible
+  // between fraction and decimal forms. Hides it otherwise (integers,
+  // irrationals, or expressions that fail to evaluate).
+  function updateInputFracToggle() {
+    const btn = document.getElementById('input-frac-toggle');
+    if (!btn) return;
+    const latex = (mf.value || '').trim();
+    if (!latex || /\\placeholder(?!\s*\{[^{}]+\})/.test(latex)) { btn.hidden = true; return; }
+    let v;
+    try {
+      const expr = latexToExpr(latex);
+      if (!expr) { btn.hidden = true; return; }
+      v = math.evaluate(expr);
+    } catch (_) { btn.hidden = true; return; }
+    if (typeof v !== 'number' || !Number.isFinite(v) || Number.isInteger(v)) { btn.hidden = true; return; }
+    let fr;
+    try { fr = math.fraction(v); } catch (_) { btn.hidden = true; return; }
+    const d = Number(fr.d);
+    if (!(d > 1 && d <= 1000)) { btn.hidden = true; return; }
+    // Decide direction: if the LaTeX already looks like a single \frac{...}{...},
+    // the toggle converts to decimal. Otherwise it converts to fraction.
+    const isFracForm = /^\s*-?\s*\\frac\s*\{[^{}]+\}\s*\{[^{}]+\}\s*$/.test(latex);
+    btn.hidden = false;
+    btn.dataset.mode = isFracForm ? 'to-decimal' : 'to-fraction';
+    btn.dataset.value = String(v);
+    btn.setAttribute('aria-label', isFracForm ? 'Convert to decimal' : 'Convert to fraction');
+    btn.title = isFracForm ? 'Convert to decimal' : 'Convert to fraction';
+    btn.innerHTML = isFracForm
+      ? '<span aria-hidden="true">#.#</span>'
+      : '<svg viewBox="0 0 24 24" aria-hidden="true"><text x="9" y="10" font-size="10" font-style="italic" font-family="serif" fill="currentColor">a</text><line x1="4" y1="12" x2="20" y2="12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><text x="9" y="22" font-size="10" font-style="italic" font-family="serif" fill="currentColor">b</text></svg>';
+  }
+
+  function onInputFracToggleClick() {
+    const btn = document.getElementById('input-frac-toggle');
+    if (!btn || btn.hidden) return;
+    const v = parseFloat(btn.dataset.value);
+    if (!Number.isFinite(v)) return;
+    if (btn.dataset.mode === 'to-decimal') {
+      const r = Math.abs(v) < 1e-12 ? 0 : parseFloat(v.toPrecision(12));
+      mf.value = String(r);
+    } else {
+      const fr = math.fraction(v);
+      const n = Number(fr.n), d = Number(fr.d);
+      mf.value = (fr.s < 0 ? '-' : '') + `\\frac{${n}}{${d}}`;
+    }
+    updateInputFracToggle();
+    mf.focus();
+  }
+
+  // --- LaTeX -> math.js expression ---
+  function latexToExpr(latex) {
+    if (!latex) return '';
+    let s = latex;
+    s = s.replace(/\\left/g, '').replace(/\\right/g, '');
+
+    // ===== Calculus preprocessing =====
+    // Convert LaTeX-style calculus operators into calls to the helper
+    // functions registered on math.js (derivativeOf, sumOver, prodOver,
+    // integrateNumeric, limitOf). Must run before the iterative \frac/\sqrt
+    // converter below — otherwise \frac{d}{dx} gets mangled to (d)/(dx).
+    //
+    // All bodies are required to be parenthesized (the templates do this).
+    // The body LaTeX is recursively re-converted to math.js syntax, then
+    // embedded as a quoted string argument so the helper can math.parse it.
+    function balancedParenBody(s, openIdx) {
+      // Given a string and an index of '(', return the matching ')' index, or -1.
+      let depth = 0;
+      for (let i = openIdx; i < s.length; i++) {
+        if (s[i] === '(') depth++;
+        else if (s[i] === ')') { depth--; if (depth === 0) return i; }
+      }
+      return -1;
+    }
+    function calcBody(latexBody) {
+      // Nested calculus operators aren't supported: my custom math.js functions
+      // can't pass the outer scope (e.g. \sum's `i`) down into the inner body
+      // evaluation. Detect and bail; the caller emits NaN → "undefined" chip.
+      // No word boundary after \sum etc. because the next char `_` is itself a
+      // word character, so \b would never match.
+      if (/\\sum|\\prod|\\int|\\lim|\\frac\s*\{\s*d\s*\}/.test(latexBody)) {
+        return null;
+      }
+      const expr = latexToExpr(latexBody);
+      return JSON.stringify(expr);
+    }
+    function bailIfNested(body) { return calcBody(body); }
+    function convertCalcPattern(input, headerRe, makeCall) {
+      // headerRe must match the header (e.g. "\\sum_{i=1}^{10}") and have a '('
+      // right after the match. Loop because there may be several in one expr.
+      let out = input, m;
+      while ((m = headerRe.exec(out)) !== null) {
+        const headerEnd = m.index + m[0].length;
+        if (out[headerEnd] !== '(') break;
+        const closeIdx = balancedParenBody(out, headerEnd);
+        if (closeIdx < 0) break;
+        const body = out.slice(headerEnd + 1, closeIdx);
+        const replacement = makeCall(m, body);
+        out = out.slice(0, m.index) + replacement + out.slice(closeIdx + 1);
+        headerRe.lastIndex = 0;
+      }
+      return out;
+    }
+
+    // \frac{d}{dx}(body) → derivativeOf("body", "x")
+    s = convertCalcPattern(s,
+      /\\frac\s*\{\s*d\s*\}\s*\{\s*d([a-z])\s*\}\s*/g,
+      (m, body) => { const b = calcBody(body); return b ? `derivativeOf(${b},"${m[1]}")` : 'NaN'; });
+
+    // \sum_{var=lo}^{hi}(body)
+    s = convertCalcPattern(s,
+      /\\sum\s*_\{\s*([a-z])\s*=\s*([^}]+)\}\s*\^\{([^}]+)\}\s*/g,
+      (m, body) => { const b = calcBody(body); return b ? `sumOver(${b},"${m[1]}",${latexToExpr(m[2])},${latexToExpr(m[3])})` : 'NaN'; });
+
+    // \prod_{var=lo}^{hi}(body)
+    s = convertCalcPattern(s,
+      /\\prod\s*_\{\s*([a-z])\s*=\s*([^}]+)\}\s*\^\{([^}]+)\}\s*/g,
+      (m, body) => { const b = calcBody(body); return b ? `prodOver(${b},"${m[1]}",${latexToExpr(m[2])},${latexToExpr(m[3])})` : 'NaN'; });
+
+    // \int_{lo}^{hi}(body) dx  — body in parens, then optional "\, dx" trailer.
+    // Default the integration variable to "x"; if a trailing "\, d<letter>" follows
+    // the integrateNumeric() call, rewrite the variable to match.
+    s = convertCalcPattern(s,
+      /\\int\s*_\{([^}]+)\}\s*\^\{([^}]+)\}\s*/g,
+      (m, body) => { const b = calcBody(body); return b ? `integrateNumeric(${b},"x",${latexToExpr(m[1])},${latexToExpr(m[2])})` : 'NaN'; });
+    // Walk each integrateNumeric( call, find its *balanced* closing paren, and
+    // strip any "\, d<letter>" that follows. Plain regex can't do this because
+    // the body string contains literal parens (e.g. "x^(2)").
+    (function stripIntegrationDifferentials() {
+      const re = /\bintegrateNumeric\s*\(/g;
+      let m;
+      while ((m = re.exec(s)) !== null) {
+        const openIdx = m.index + m[0].length - 1;
+        const closeIdx = balancedParenBody(s, openIdx);
+        if (closeIdx < 0) break;
+        const after = s.slice(closeIdx + 1);
+        const dxMatch = after.match(/^\s*\\?,?\s*d([a-z])/);
+        if (dxMatch) {
+          // If the differential variable differs from "x", rewrite the var arg.
+          const v = dxMatch[1];
+          if (v !== 'x') {
+            const call = s.slice(m.index, closeIdx + 1).replace(/,"x",/, `,"${v}",`);
+            s = s.slice(0, m.index) + call + after.slice(dxMatch[0].length);
+          } else {
+            s = s.slice(0, closeIdx + 1) + after.slice(dxMatch[0].length);
+          }
+          re.lastIndex = 0;
+        }
+      }
+    })();
+
+    // \lim_{var\to a}(body)
+    s = convertCalcPattern(s,
+      /\\lim\s*_\{\s*([a-z])\s*\\to\s*([^}]+)\}\s*/g,
+      (m, body) => { const b = calcBody(body); return b ? `limitOf(${b},"${m[1]}",${latexToExpr(m[2])})` : 'NaN'; });
+
+    // Iteratively convert all brace-using constructs (sqrt, frac, exponent).
+    // Each pass replaces the innermost (no internal braces); the next pass sees
+    // the outer level with its inner braces resolved. Handles arbitrary nesting
+    // like \frac{1+\sqrt{5}}{2}, \frac{\frac{1}{2}}{3}, etc.
+    // MathLive omits braces around single-token args (e.g. \frac93, \sqrt9);
+    // each pattern below accepts {...} OR a single non-brace token.
+    let prev;
+    let safety = 50;
+    do {
+      prev = s;
+      // n-th root before plain root
+      s = s.replace(/\\sqrt\s*\[([^\[\]{}]*)\]\s*(?:\{([^{}]*)\}|([^\s{}\\]))/g,
+        (_, n, x1, x2) => `nthRoot((${x1 ?? x2}),(${n}))`);
+      s = s.replace(/\\sqrt\s*(?:\{([^{}]*)\}|([^\s{}\\]))/g,
+        (_, a, b) => `sqrt((${a ?? b}))`);
+      s = s.replace(/\\frac\s*(?:\{([^{}]*)\}|([^\s{}\\]))\s*(?:\{([^{}]*)\}|([^\s{}\\]))/g,
+        (_, n1, n2, d1, d2) => `((${n1 ?? n2})/(${d1 ?? d2}))`);
+      s = s.replace(/\^\s*\{([^{}]*)\}/g, '^($1)');
+    } while (s !== prev && safety-- > 0);
+    // abs
+    s = s.replace(/\|([^|]+)\|/g, 'abs($1)');
+    // operators
+    s = s.replace(/\\cdot/g, '*')
+         .replace(/\\times/g, '*')
+         .replace(/\\div/g, '/')
+         .replace(/\\pi/g, 'pi')
+         .replace(/\\%/g, '/100')
+         .replace(/\\,/g, '');
+    // \arcsin/\arccos/\arctan -> asin/acos/atan (math.js naming)
+    s = s.replace(/\\arc(sin|cos|tan)/g, 'a$1');
+    // log -> log10 (math.js uses log() = ln); we want log to mean base-10
+    s = s.replace(/\\log/g, 'log10');
+    // ln -> log (math.js natural log is `log` with one arg)
+    s = s.replace(/\\ln/g, 'log');
+    // exp keeps its name
+    // standard LaTeX trig / hyperbolic / exp commands → bare math.js names.
+    // Longer names first so e.g. \sinh isn't consumed by \sin.
+    s = s.replace(/\\(arcsin|arccos|arctan|sinh|cosh|tanh|asin|acos|atan|sin|cos|tan|csc|sec|cot|exp|min|max|gcd|mod|abs)/g, '$1');
+    // \arcsin etc. (above) - normalize to math.js style "asin"
+    s = s.replace(/\barc(sin|cos|tan|csc|sec|cot)\b/g, 'a$1');
+    // \operatorname{name} -> name (handles mean, stdev, stdevp, nPr, nCr, abs, round, etc.)
+    s = s.replace(/\\operatorname\s*\{([^{}]+)\}/g, '$1');
+    // map calculator function names to math.js equivalents
+    s = s.replace(/\bstdevp\b/g, 'std');  // prototype: maps to sample stdev
+    s = s.replace(/\bstdev\b/g, 'std');
+    s = s.replace(/\bnPr\b/g, 'permutations');
+    s = s.replace(/\bnCr\b/g, 'combinations');
+    s = s.replace(/\bvar\b/g, 'variance');
+    // strip remaining latex braces / commands
+    s = s.replace(/[{}]/g, '');
+    return s.trim();
+  }
+
+  function evaluate() {
+    const latex = (mf.value || '').trim();
+    if (!latex) return;
+    // Refuse to submit when the input contains unfilled placeholders
+    // (e.g. user clicked sin( ) but never typed the argument).
+    // Move focus to the placeholder so the user knows what to fill in.
+    if (/\\placeholder(?!\s*\{[^{}]+\})/.test(latex)) {
+      mf.executeCommand('moveToNextPlaceholder');
+      return;
+    }
+    const expr = latexToExpr(latex);
+    let resultLatex;
+    let fractionLatex = null;
+    try {
+      const evalExpr = expr;
+      // DEG mode: override trig and inverse-trig in math.js's scope so that
+      // sin/cos/tan/csc/sec/cot take degrees, and asin/.../acot return degrees.
+      // Scope-based avoids fragile regex surgery on nested expressions like
+      // \arctan(\sqrt{3}) → atan(sqrt((3))) with deep parens.
+      const D2R = Math.PI / 180, R2D = 180 / Math.PI;
+      const scope = angleMode === 'deg'
+        ? {
+            sin:  x => Math.sin(x * D2R),
+            cos:  x => Math.cos(x * D2R),
+            tan:  x => Math.tan(x * D2R),
+            csc:  x => 1 / Math.sin(x * D2R),
+            sec:  x => 1 / Math.cos(x * D2R),
+            cot:  x => 1 / Math.tan(x * D2R),
+            asin: x => Math.asin(x) * R2D,
+            acos: x => Math.acos(x) * R2D,
+            atan: x => Math.atan(x) * R2D,
+            acsc: x => Math.asin(1 / x) * R2D,
+            asec: x => Math.acos(1 / x) * R2D,
+            acot: x => Math.atan(1 / x) * R2D
+          }
+        : undefined;
+      let v = scope ? math.parse(evalExpr).evaluate(scope) : math.evaluate(evalExpr);
+      // Coerce booleans (e.g. isPrime returns true/false) to 1/0 for display
+      if (typeof v === 'boolean') v = v ? 1 : 0;
+      // Real-mode "undefined" cases:
+      //   • Complex results from √(-x), ln(-x), arcsin(|x|>1), etc.
+      //   • Non-finite (Infinity / NaN) from 9/0, 0/0, log(0), 2^1024, etc.
+      //   • tan/cot near a singularity — float rounding turns Infinity into a
+      //     finite-but-huge number (tan(90°) ≈ 1.6e16). Snap huge magnitudes
+      //     to undefined only when the expression actually uses tan/cot, so
+      //     legitimate large-number arithmetic still works.
+      // Functions that have real-domain singularities. Used both for
+      // huge-but-finite detection (float rounds Infinity → ~1e16) and for
+      // distinguishing "undefined" (singularity) from "overflow" (just too big).
+      const SINGULARITY_FN_RE = /\b(tan|cot|csc|sec|atanh|acoth|asech|acsch)\s*\(/;
+
+      const isComplexResult = math.isComplex && math.isComplex(v);
+      const hasSingularityFn = SINGULARITY_FN_RE.test(evalExpr);
+      const isHugeFromTrig = typeof v === 'number' && hasSingularityFn && Math.abs(v) > 1e10;
+      const isNonFiniteNumber = typeof v === 'number' && !Number.isFinite(v);
+      if (isComplexResult || isHugeFromTrig || isNonFiniteNumber) {
+        // Distinguish "undefined" (singularity) from "overflow" (number too big).
+        let reason = 'undefined';
+        if (isNonFiniteNumber && !isComplexResult && !isHugeFromTrig) {
+          const isDivByZero = /\/\s*\(?\s*0\b(?!\.)/.test(evalExpr);
+          const isLogOfZero = /\b(?:log|log10)\s*\(\s*0\s*[,)]/.test(evalExpr);
+          if (!Number.isNaN(v) && !isDivByZero && !isLogOfZero && !hasSingularityFn) reason = 'overflow';
+        }
+        resultLatex = `\\text{${reason}}`;
+        lastAnswer = null;
+      } else if (typeof v === 'number') {
+        // Round to 12 sig figs via toPrecision (works for any magnitude;
+        // the previous Math.round(v * 1e12) form overflowed for v >= 1e296).
+        const r = Math.abs(v) < 1e-12 ? 0 : parseFloat(v.toPrecision(12));
+        resultLatex = String(r);
+        lastAnswer = v;
+        // Pre-compute the fraction representation when it's clean (small
+        // denominator) and not already an integer. Used by the toggle button.
+        try {
+          if (Number.isFinite(r) && !Number.isInteger(r)) {
+            const fr = math.fraction(r);
+            const d = Number(fr.d), n = Number(fr.n);
+            if (d > 1 && d <= 1000 && Math.abs(n) < 1e15) {
+              fractionLatex = (fr.s < 0 ? '-' : '') + `\\frac{${n}}{${d}}`;
+            }
+          }
+        } catch (_) { /* not representable as a clean fraction */ }
+      } else if (typeof v === 'string') {
+        // Symbolic results (e.g. derivativeOf returns a math.js expression string).
+        // Pass through directly — math.format would wrap it in quotes.
+        resultLatex = v;
+        lastAnswer = v;
+      } else {
+        resultLatex = math.format(v, { precision: 12 });
+        lastAnswer = v;
+      }
+    } catch (err) {
+      resultLatex = '\\text{error}';
+    }
+    entries.push({ exprLatex: latex, resultLatex, fractionLatex, displayMode: 'decimal' });
+    mf.value = '';
+    updateInputFracToggle();
+    renderHistory();
+  }
+
+  function updateClearAllVisibility() {
+    const hasInput = (mf && (mf.value || '').length > 0);
+    const hasHistory = entries.length > 0;
+    document.getElementById('clear-all').style.visibility = (hasInput || hasHistory) ? 'visible' : 'hidden';
+  }
+
+  // Postfix operators (a², a^b, !) need an operand to act on.
+  // Disable when:
+  //   • the input is empty, OR
+  //   • there's an unfilled placeholder anywhere (cursor is most likely
+  //     parked in it, and applying a postfix would nest malformed LaTeX
+  //     like \placeholder{}^2 → ^{^2}).
+  function updateOperandRequiredKeys() {
+    const v = (mf && mf.value) || '';
+    const hasUnfilledPlaceholder = /\\placeholder\s*\{\s*\}/.test(v);
+    const hasOperand = v.length > 0 && !hasUnfilledPlaceholder;
+    document.querySelectorAll('[data-needs-operand]').forEach(k => {
+      k.classList.toggle('is-disabled', !hasOperand);
+      if (!hasOperand) k.setAttribute('aria-disabled', 'true');
+      else k.removeAttribute('aria-disabled');
+    });
+  }
+
+  const TEST_MODE = new URLSearchParams(location.search).get('testharness') === '1';
+
+  function renderHistory() {
+    const el = document.getElementById('history');
+    el.innerHTML = '';
+    updateClearAllVisibility();
+    updateOperandRequiredKeys();
+    // In test mode we only render the last entry to avoid O(N²) KaTeX re-renders
+    // across long test suites. The runner only reads the most recent result anyway.
+    const renderList = TEST_MODE ? entries.slice(-1) : entries;
+    if (entries.length === 0) {
+      const blank = document.createElement('div');
+      blank.className = 'row blank-row';
+      el.appendChild(blank);
+      return;
+    }
+    renderList.forEach((e) => {
+      const row = document.createElement('article');
+      row.className = 'row';
+      const left = document.createElement('span');
+      left.className = 'expr';
+      renderTex(left, e.exprLatex);
+      const right = document.createElement('span');
+      right.className = 'res';
+      const resSpan = document.createElement('span');
+      const statusChip = buildStatusChip(e.resultLatex);
+      if (statusChip) {
+        resSpan.appendChild(statusChip);
+      } else {
+        // SR-only "equals" so the live region announces "<expr> equals <result>"
+        // instead of the visual "= 4" (which screen readers may not speak).
+        const eq = document.createElement('span');
+        eq.className = 'sr-only';
+        eq.textContent = ' equals ';
+        resSpan.appendChild(eq);
+        const visible = document.createElement('span');
+        visible.setAttribute('aria-hidden', 'true');
+        const shown = (e.displayMode === 'fraction' && e.fractionLatex) ? e.fractionLatex : e.resultLatex;
+        renderTex(visible, `= ${shown}`);
+        resSpan.appendChild(visible);
+        const spoken = document.createElement('span');
+        spoken.className = 'sr-only';
+        spoken.textContent = latexToSpeech(shown);
+        resSpan.appendChild(spoken);
+        // Square toggle button: only when a clean fraction representation exists
+        if (e.fractionLatex) {
+          const toggle = document.createElement('button');
+          toggle.type = 'button';
+          toggle.className = 'frac-toggle';
+          const isFraction = e.displayMode === 'fraction';
+          toggle.setAttribute('aria-label', isFraction ? 'Convert to decimal' : 'Convert to fraction');
+          toggle.title = isFraction ? 'Convert to decimal' : 'Convert to fraction';
+          toggle.innerHTML = isFraction
+            // Text "#.#" indicates "convert to decimal"
+            ? '<span aria-hidden="true">#.#</span>'
+            // Fraction icon a/b stacked with a bar indicates "convert to fraction"
+            : '<svg viewBox="0 0 24 24" aria-hidden="true"><text x="9" y="10" font-size="10" font-style="italic" font-family="serif" fill="currentColor">a</text><line x1="4" y1="12" x2="20" y2="12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><text x="9" y="22" font-size="10" font-style="italic" font-family="serif" fill="currentColor">b</text></svg>';
+          toggle.addEventListener('click', () => {
+            e.displayMode = isFraction ? 'decimal' : 'fraction';
+            renderHistory();
+          });
+          resSpan.appendChild(toggle);
+        }
+      }
+      right.appendChild(resSpan);
+      row.appendChild(left);
+      row.appendChild(right);
+      el.appendChild(row);
+    });
+    el.scrollTop = el.scrollHeight;
+  }
+
+  // Wait for the math-field custom element to be defined before init,
+  // otherwise mf.executeCommand and value setter are unavailable.
+  function ready() {
+    if (window.customElements && customElements.get('math-field')) {
+      init();
+    } else if (window.customElements) {
+      customElements.whenDefined('math-field').then(init);
+    } else {
+      setTimeout(ready, 50);
+    }
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', ready);
+  } else {
+    ready();
+  }
+})();
+</script>
+</body>
+</html>

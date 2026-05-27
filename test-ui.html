@@ -1,0 +1,1037 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>UI test runner</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;500;600;700&display=swap" />
+<style>
+  :root {
+    --bg:#FFF; --panel:#F7F8F8; --border:#E3E5E8; --ink:#1D1D1D; --muted:#424147;
+    --blue:#0D64F2; --blue-tint:#E6F0FF;
+    --pass:#138a3d; --pass-bg:#E6F4EA;
+    --fail:#C32113; --fail-bg:#FBE9E7;
+  }
+  * { box-sizing: border-box; }
+  html,body { margin:0; padding:0; background:var(--panel); color:var(--ink); font-family:'Open Sans',sans-serif; }
+  .app { display:grid; grid-template-columns:420px 1fr; min-height:100vh; }
+  .controls { background:var(--bg); border-right:1px solid var(--border); padding:16px; display:flex; flex-direction:column; gap:12px; }
+  .controls h1 { font-size:18px; margin:0; }
+  iframe.calc { border:1px solid var(--border); border-radius:6px; width:100%; height:620px; background:#fff; }
+  button.run { background:var(--blue); color:#fff; border:0; border-radius:8px; padding:10px 16px; font:inherit; font-weight:600; cursor:pointer; transition:all .3s; }
+  button.run:hover { background:#114DBC; }
+  button.run:disabled { opacity:.5; cursor:default; }
+  label { display:flex; align-items:center; gap:8px; font-size:14px; cursor:pointer; }
+  .summary { background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:12px; font-size:14px; }
+  .stat { display:flex; justify-content:space-between; padding:2px 0; }
+  .stat b { font-weight:600; }
+  .stat.pass b { color:var(--pass); }
+  .stat.fail b { color:var(--fail); }
+  .results { padding:16px; overflow:auto; }
+  .row { display:grid; grid-template-columns:180px 1fr 80px; gap:12px; padding:8px 10px; font-size:13px; align-items:center; border-bottom:1px solid var(--border); border-radius:6px; }
+  .row.head { font-weight:600; background:var(--panel); margin-bottom:8px; position:sticky; top:0; border:1px solid var(--border); }
+  .row.pass { background:var(--pass-bg); }
+  .row.fail { background:var(--fail-bg); }
+  .row .status { font-weight:600; text-align:center; }
+  .row .status.pass { color:var(--pass); }
+  .row .status.fail { color:var(--fail); }
+  .row code { font-family:'SF Mono', Menlo, monospace; font-size:12px; }
+  .pill { display:inline-block; padding:2px 8px; border-radius:999px; font-size:11px; font-weight:600; background:var(--blue-tint); color:var(--blue); }
+  .empty { color:var(--muted); padding:40px; text-align:center; }
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="controls">
+    <h1>UI button test runner</h1>
+    <iframe class="calc" id="calc" src="index.html?testharness=1"></iframe>
+    <button class="run" id="run">Run all UI tests</button>
+    <label><input type="checkbox" id="filter-fail" /> Show failures only</label>
+    <div class="summary">
+      <div class="stat"><span>Total</span><b id="total">—</b></div>
+      <div class="stat pass"><span>Passed</span><b id="pass">—</b></div>
+      <div class="stat fail"><span>Failed</span><b id="fail">—</b></div>
+      <div class="stat"><span>Duration</span><b id="dur">—</b></div>
+    </div>
+  </div>
+  <div class="results" id="results"><div class="empty">Click "Run all UI tests" to begin.</div></div>
+</div>
+
+<script>
+const els = {
+  iframe: document.getElementById('calc'),
+  run: document.getElementById('run'),
+  total: document.getElementById('total'),
+  pass: document.getElementById('pass'),
+  fail: document.getElementById('fail'),
+  dur: document.getElementById('dur'),
+  results: document.getElementById('results'),
+  filterFail: document.getElementById('filter-fail'),
+};
+let lastResults = [];
+els.filterFail.addEventListener('change', () => renderResults(lastResults));
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+function ctx() {
+  const w = els.iframe.contentWindow;
+  const d = els.iframe.contentDocument || w.document;
+  return { w, d };
+}
+
+async function waitForReady() {
+  return new Promise(resolve => {
+    const tick = () => {
+      const c = ctx();
+      if (c.d?.getElementById('mf') && c.w?.customElements?.get('math-field') && typeof c.w.functionPlot === 'function') resolve();
+      else setTimeout(tick, 50);
+    };
+    tick();
+  });
+}
+
+// ------------------- helpers used by tests -------------------
+async function resetToScientificMain() {
+  const { d } = ctx();
+  d.querySelector('.top-tab[data-view="scientific"]').click();
+  await sleep(30);
+  d.querySelector('.tab[data-tab="main"]').click();
+  await sleep(30);
+  d.getElementById('clear-all')?.click();
+  await sleep(30);
+  const mf = d.getElementById('mf');
+  mf.value = '';
+  mf.focus();
+}
+
+async function resetToScientificTab(tab) {
+  const { d } = ctx();
+  d.querySelector('.top-tab[data-view="scientific"]').click();
+  await sleep(30);
+  d.querySelector(`.tab[data-tab="${tab}"]`).click();
+  await sleep(30);
+  d.getElementById('clear-all')?.click();
+  await sleep(30);
+  const mf = d.getElementById('mf');
+  mf.value = '';
+  mf.focus();
+}
+
+async function resetToGraphing() {
+  const { d } = ctx();
+  d.querySelector('.top-tab[data-view="graphing"]').click();
+  await sleep(80);
+  // Clear all expression rows
+  let safety = 20;
+  while (d.querySelectorAll('.expr-row').length > 0 && safety-- > 0) {
+    d.querySelector('.expr-delete')?.click();
+    await sleep(15);
+  }
+}
+
+async function addGraphRow(latex) {
+  const { d } = ctx();
+  d.getElementById('add-expr').click();
+  await sleep(30);
+  const rows = d.querySelectorAll('.expr-row');
+  const mf = rows[rows.length - 1].querySelector('math-field');
+  mf.value = latex;
+  mf.dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
+  mf.dispatchEvent(new Event('input', { bubbles: true }));
+  await sleep(120);
+  return mf;
+}
+
+// ------------------- tests -------------------
+const tests = [];
+
+// === Top-level view tabs ===
+// (Removed "Scientific is active on load" — covered by top-tab-scientific-back,
+// and the dynamic test-builders mutate page state before tests run, so this
+// can't reliably check the initial DOM.)
+tests.push({
+  id: 'top-tab-graphing-switch', category: 'top-tabs',
+  desc: 'Click Graphing → graphing view visible, scientific hidden',
+  async run() {
+    const { d } = ctx();
+    d.querySelector('.top-tab[data-view="graphing"]').click();
+    await sleep(80);
+    return d.querySelector('#view-graphing').classList.contains('active') &&
+           !d.querySelector('#view-scientific').classList.contains('active');
+  }
+});
+tests.push({
+  id: 'top-tab-scientific-back', category: 'top-tabs',
+  desc: 'Click Scientific → scientific view visible',
+  async run() {
+    const { d } = ctx();
+    d.querySelector('.top-tab[data-view="graphing"]').click();
+    await sleep(40);
+    d.querySelector('.top-tab[data-view="scientific"]').click();
+    await sleep(40);
+    return d.querySelector('#view-scientific').classList.contains('active') &&
+           !d.querySelector('#view-graphing').classList.contains('active');
+  }
+});
+
+// === Scientific inner tabs (home / abc / func) ===
+['main','abc','func'].forEach(tab => {
+  tests.push({
+    id: `inner-tab-${tab}`, category: 'scientific-tabs',
+    desc: `Click ${tab} tab → corresponding panel active`,
+    async run() {
+      await resetToScientificMain();
+      const { d } = ctx();
+      d.querySelector(`.tab[data-tab="${tab}"]`).click();
+      await sleep(40);
+      return d.querySelector(`.panel[data-panel="${tab}"]`).classList.contains('active') &&
+             d.querySelector(`.tab[data-tab="${tab}"]`).classList.contains('active');
+    }
+  });
+});
+
+// === DEG / RAD mode toggle ===
+tests.push({
+  id: 'mode-deg-default', category: 'angle-mode',
+  desc: 'DEG is the default active mode',
+  async run() {
+    const { d } = ctx();
+    return d.querySelector('.angle button[data-angle="deg"]').classList.contains('active');
+  }
+});
+tests.push({
+  id: 'mode-rad-toggle', category: 'angle-mode',
+  desc: 'Click RAD → RAD active, DEG inactive; sin(90) becomes ~0.894 (radian)',
+  async run() {
+    await resetToScientificMain();
+    const { d } = ctx();
+    d.querySelector('.angle button[data-angle="rad"]').click();
+    await sleep(30);
+    if (!d.querySelector('.angle button[data-angle="rad"]').classList.contains('active')) return false;
+    if (d.querySelector('.angle button[data-angle="deg"]').classList.contains('active')) return false;
+    const mf = d.getElementById('mf');
+    mf.value = '\\sin\\left(90\\right)';
+    mf.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await sleep(40);
+    const annot = d.querySelector('.history .row:last-child .res .katex-mathml annotation')?.textContent;
+    return /0\.89/.test(annot || '');
+  }
+});
+tests.push({
+  id: 'mode-deg-toggle', category: 'angle-mode',
+  desc: 'Click DEG → DEG active; sin(90) = 1',
+  async run() {
+    await resetToScientificMain();
+    const { d } = ctx();
+    d.querySelector('.angle button[data-angle="deg"]').click();
+    await sleep(30);
+    const mf = d.getElementById('mf');
+    mf.value = '\\sin\\left(90\\right)';
+    mf.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await sleep(40);
+    const annot = d.querySelector('.history .row:last-child .res .katex-mathml annotation')?.textContent;
+    return /^=\s*1$/.test((annot || '').trim());
+  }
+});
+
+// === Scientific home panel buttons — one test per button ===
+// Generated dynamically so coverage stays in sync if buttons change.
+async function buildScientificHomeButtonTests() {
+  await waitForReady();
+  await resetToScientificTab('main');
+  const { d } = ctx();
+  const buttons = Array.from(d.querySelectorAll('.panel[data-panel="main"] .key'));
+  buttons.forEach(btn => {
+    const dataInsert = btn.dataset.insert;
+    const dataLatex = btn.dataset.latex;
+    const dataCmd = btn.dataset.cmd;
+    const dataFn = btn.dataset.fn;
+    const dataLetter = btn.dataset.letter;
+    const labelTex = btn.dataset.latexTex;
+    const label = dataInsert || dataLatex || dataCmd || dataFn || dataLetter || labelTex || btn.textContent.trim().slice(0,12);
+
+    const id = `home-key-${dataCmd || dataFn || (dataInsert?'i'+dataInsert:null) || (dataLatex?'l'+dataLatex:null) || labelTex || label}`;
+    tests.push({
+      id, category: 'home-keypad',
+      desc: `Home keypad: clicking "${label}" produces expected effect`,
+      async run() {
+        await resetToScientificTab('main');
+        const { d } = ctx();
+        const mf = d.getElementById('mf');
+        // Pre-fill operand for keys that need one (a², a^b, etc.)
+        if (btn.dataset.needsOperand !== undefined) {
+          mf.value = '5';
+          mf.dispatchEvent(new Event('input', { bubbles: true }));
+          await sleep(40);
+        } else if (dataCmd === 'ans') {
+          // Compute something first so lastAnswer is set
+          mf.value = '2+2';
+          mf.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+          await sleep(40);
+        } else if (dataCmd === 'backspace' || dataCmd === 'left' || dataCmd === 'right') {
+          mf.value = '12';
+          mf.dispatchEvent(new Event('input', { bubbles: true }));
+          await sleep(40);
+        } else if (dataCmd === 'enter') {
+          // Enter on empty input is a no-op (guard); pre-fill so it commits
+          mf.value = '1+1';
+          mf.dispatchEvent(new Event('input', { bubbles: true }));
+          await sleep(40);
+        }
+        const before = mf.value;
+        // Click the live button (re-query after reset)
+        const live = d.querySelector(`.panel[data-panel="main"] .key${selectorFor(btn)}`);
+        if (!live) return false;
+        if (live.classList.contains('is-disabled')) return false;
+        live.click();
+        await sleep(40);
+        const after = mf.value;
+        // Validate per type
+        if (dataCmd === 'enter') {
+          // For 5 -> a² -> Enter the history grew; otherwise pre-filled "5" Enter gives a row
+          return d.querySelectorAll('.history .row:not(.blank-row)').length > 0;
+        }
+        if (dataCmd === 'frac' || dataCmd === 'sqrt' || dataCmd === 'nthroot' || dataCmd === 'abs') {
+          return after.includes('\\') && after !== before;
+        }
+        if (dataCmd === 'backspace') return after.length < before.length;
+        if (dataCmd === 'left' || dataCmd === 'right') return true; // moveTo* — best we can check is no error
+        if (dataCmd === 'ans') return after !== '';
+        if (dataFn) return after.includes(`\\${dataFn}`) || after.includes(`\\operatorname{${dataFn}}`);
+        if (dataLatex !== undefined) return after !== before;
+        if (dataInsert !== undefined) return after.includes(dataInsert.replace(/\\/g,'')) || after !== before;
+        return after !== before;
+      }
+    });
+  });
+}
+
+function selectorFor(btn) {
+  const parts = [];
+  if (btn.dataset.insert !== undefined) parts.push(`[data-insert="${cssEscape(btn.dataset.insert)}"]`);
+  if (btn.dataset.latex !== undefined)  parts.push(`[data-latex="${cssEscape(btn.dataset.latex)}"]`);
+  if (btn.dataset.cmd !== undefined)    parts.push(`[data-cmd="${cssEscape(btn.dataset.cmd)}"]`);
+  if (btn.dataset.fn !== undefined)     parts.push(`[data-fn="${cssEscape(btn.dataset.fn)}"]`);
+  if (btn.dataset.letter !== undefined) parts.push(`[data-letter="${cssEscape(btn.dataset.letter)}"]`);
+  if (btn.dataset.latexTex !== undefined) parts.push(`[data-latex-tex="${cssEscape(btn.dataset.latexTex)}"]`);
+  return parts.join('');
+}
+function cssEscape(s) { return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"'); }
+
+// === abc panel buttons — letters + shift + special ===
+async function buildAbcButtonTests() {
+  await waitForReady();
+  await resetToScientificTab('abc');
+  const { d } = ctx();
+  const letters = Array.from(d.querySelectorAll('.panel[data-panel="abc"] .abc-letter'));
+  letters.forEach(btn => {
+    const letter = btn.dataset.letter;
+    tests.push({
+      id: `abc-letter-${letter}`, category: 'abc-keypad',
+      desc: `abc: clicking "${letter}" inserts the letter`,
+      async run() {
+        await resetToScientificTab('abc');
+        const { d } = ctx();
+        const mf = d.getElementById('mf');
+        d.querySelector(`.panel[data-panel="abc"] .abc-letter[data-letter="${letter}"]`).click();
+        await sleep(30);
+        return mf.value === letter;
+      }
+    });
+  });
+
+  tests.push({
+    id: 'abc-shift', category: 'abc-keypad',
+    desc: 'Shift → next letter uppercase, then resets',
+    async run() {
+      await resetToScientificTab('abc');
+      const { d } = ctx();
+      const mf = d.getElementById('mf');
+      d.getElementById('abc-shift').click();
+      await sleep(30);
+      if (!d.querySelector('.panel[data-panel="abc"]').classList.contains('shift-on')) return false;
+      d.querySelector('.abc-letter[data-letter="a"]').click();
+      await sleep(30);
+      if (mf.value !== 'A') return false;
+      // Shift should auto-reset
+      d.querySelector('.abc-letter[data-letter="b"]').click();
+      await sleep(30);
+      return mf.value === 'Ab';
+    }
+  });
+
+  tests.push({
+    id: 'abc-bracket-left', category: 'abc-keypad',
+    desc: 'abc: [ button inserts left bracket',
+    async run() {
+      await resetToScientificTab('abc');
+      const { d } = ctx();
+      const mf = d.getElementById('mf');
+      d.querySelector('.panel[data-panel="abc"] .key[data-insert="["]').click();
+      await sleep(30);
+      return mf.value === '[';
+    }
+  });
+  tests.push({
+    id: 'abc-bracket-right', category: 'abc-keypad',
+    desc: 'abc: ] button inserts right bracket',
+    async run() {
+      await resetToScientificTab('abc');
+      const { d } = ctx();
+      const mf = d.getElementById('mf');
+      d.querySelector('.panel[data-panel="abc"] .key[data-insert="]"]').click();
+      await sleep(30);
+      return mf.value === ']';
+    }
+  });
+  tests.push({
+    id: 'abc-equals', category: 'abc-keypad',
+    desc: 'abc: = button inserts equals',
+    async run() {
+      await resetToScientificTab('abc');
+      const { d } = ctx();
+      const mf = d.getElementById('mf');
+      d.querySelector('.panel[data-panel="abc"] .key[data-insert="="]').click();
+      await sleep(30);
+      return mf.value === '=';
+    }
+  });
+  tests.push({
+    id: 'abc-prime', category: 'abc-keypad',
+    desc: "abc: ' (prime) inserts \\prime",
+    async run() {
+      await resetToScientificTab('abc');
+      const { d } = ctx();
+      const mf = d.getElementById('mf');
+      // Iterate buttons rather than using a CSS attribute selector — backslashes
+      // in attribute values need extra escaping that's hard to get right.
+      const primeBtn = Array.from(d.querySelectorAll('.panel[data-panel="abc"] .key'))
+        .find(b => b.dataset.insert === '\\prime');
+      if (!primeBtn) return false;
+      primeBtn.click();
+      await sleep(30);
+      return mf.value.includes('prime');
+    }
+  });
+}
+
+// === func panel buttons — each f(x) library quick-pick ===
+async function buildFuncButtonTests() {
+  await waitForReady();
+  await resetToScientificTab('func');
+  const { d } = ctx();
+  const buttons = Array.from(d.querySelectorAll('.panel[data-panel="func"] .key'));
+  buttons.forEach(btn => {
+    const dataInsert = btn.dataset.insert;
+    const dataLatex = btn.dataset.latex;
+    const dataCmd = btn.dataset.cmd;
+    const dataFn = btn.dataset.fn;
+    const label = dataInsert || dataLatex || dataCmd || dataFn || btn.textContent.trim().slice(0,12);
+
+    const id = `func-key-${dataCmd || dataFn || (dataInsert?'i'+dataInsert:'') || (dataLatex?'l'+dataLatex:'') || label}`;
+    tests.push({
+      id, category: 'func-keypad',
+      desc: `func: clicking "${label}" inserts something into math-field`,
+      async run() {
+        await resetToScientificTab('func');
+        const { d } = ctx();
+        const mf = d.getElementById('mf');
+        if (btn.dataset.needsOperand !== undefined) {
+          mf.value = '5';
+          mf.dispatchEvent(new Event('input', { bubbles: true }));
+          await sleep(40);
+        } else if (dataCmd === 'enter') {
+          mf.value = '1+1';
+          mf.dispatchEvent(new Event('input', { bubbles: true }));
+          await sleep(40);
+        }
+        const before = mf.value;
+        const live = d.querySelector(`.panel[data-panel="func"] .key${selectorFor(btn)}`);
+        if (!live) return false;
+        if (live.classList.contains('is-disabled')) return false;
+        live.click();
+        await sleep(40);
+        if (dataCmd === 'enter') return d.querySelectorAll('.history .row:not(.blank-row)').length > 0;
+        if (dataCmd === 'backspace') return mf.value.length < (before.length || 1);
+        return mf.value !== before;
+      }
+    });
+  });
+}
+
+// === Toolbar buttons ===
+tests.push({
+  id: 'toolbar-undo', category: 'toolbar',
+  desc: 'Undo button reverses last input',
+  async run() {
+    await resetToScientificMain();
+    const { d } = ctx();
+    const mf = d.getElementById('mf');
+    d.querySelector('.panel[data-panel="main"] .key[data-insert="5"]').click();
+    await sleep(40);
+    const before = mf.value;
+    d.getElementById('undo').click();
+    await sleep(50);
+    return mf.value !== before;
+  }
+});
+tests.push({
+  id: 'toolbar-clear-all', category: 'toolbar',
+  desc: 'Clear all wipes history + input',
+  async run() {
+    await resetToScientificMain();
+    const { d } = ctx();
+    const mf = d.getElementById('mf');
+    mf.value = '7+8';
+    mf.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await sleep(30);
+    mf.value = '3';
+    mf.dispatchEvent(new Event('input', { bubbles: true }));
+    await sleep(30);
+    d.getElementById('clear-all').click();
+    await sleep(40);
+    return mf.value === '' && d.querySelectorAll('.history .row:not(.blank-row)').length === 0;
+  }
+});
+tests.push({
+  id: 'toolbar-clear-visibility', category: 'toolbar',
+  desc: 'Clear all is hidden when no history and no input',
+  async run() {
+    await resetToScientificMain();
+    const { d } = ctx();
+    // Check inline style — visibility has a CSS transition so the computed
+    // value may lag behind for up to the transition duration.
+    return d.getElementById('clear-all').style.visibility === 'hidden';
+  }
+});
+tests.push({
+  id: 'toolbar-clear-visibility-on-input', category: 'toolbar',
+  desc: 'Clear all becomes visible after typing',
+  async run() {
+    await resetToScientificMain();
+    const { d } = ctx();
+    d.querySelector('.panel[data-panel="main"] .key[data-insert="5"]').click();
+    await sleep(40);
+    return getComputedStyle(d.getElementById('clear-all')).visibility === 'visible';
+  }
+});
+
+// === Keypad collapse / expand ===
+tests.push({
+  id: 'scientific-no-collapse', category: 'keypad-collapse',
+  desc: 'Scientific keypad has no collapse handle (graphing-only feature)',
+  async run() {
+    await resetToScientificMain();
+    const { d } = ctx();
+    return d.querySelector('#view-scientific .keypad-toggle') === null;
+  }
+});
+tests.push({
+  id: 'collapse-graphing', category: 'keypad-collapse',
+  desc: 'Graph keypad: collapse hides contents, expand restores',
+  async run() {
+    await resetToGraphing();
+    const { d } = ctx();
+    const kp = d.querySelector('.graph-keypad');
+    const toggle = d.querySelector('.graph-keypad-toggle');
+    toggle.click(); await sleep(60);
+    if (!kp.classList.contains('collapsed')) return false;
+    // All non-toggle children should be hidden
+    const hidden = Array.from(kp.children).filter(c => !c.classList.contains('keypad-toggle')).every(c => getComputedStyle(c).display === 'none');
+    if (!hidden) return false;
+    toggle.click(); await sleep(60);
+    return !kp.classList.contains('collapsed');
+  }
+});
+
+// === Graphing: add / remove expressions ===
+tests.push({
+  id: 'graph-add-expression', category: 'graphing-rows',
+  desc: 'Click + Add expression → new row appears',
+  async run() {
+    await resetToGraphing();
+    const { d } = ctx();
+    const before = d.querySelectorAll('.expr-row').length;
+    d.getElementById('add-expr').click();
+    await sleep(40);
+    return d.querySelectorAll('.expr-row').length === before + 1;
+  }
+});
+tests.push({
+  id: 'graph-remove-expression', category: 'graphing-rows',
+  desc: 'Click × on a row → row removed',
+  async run() {
+    await resetToGraphing();
+    await addGraphRow('y=x');
+    const { d } = ctx();
+    const before = d.querySelectorAll('.expr-row').length;
+    d.querySelector('.expr-delete').click();
+    await sleep(40);
+    return d.querySelectorAll('.expr-row').length === before - 1;
+  }
+});
+tests.push({
+  id: 'graph-row-color', category: 'graphing-rows',
+  desc: 'New row gets a color swatch',
+  async run() {
+    await resetToGraphing();
+    await addGraphRow('y=x');
+    const { d } = ctx();
+    const swatch = d.querySelector('.expr-row .expr-color');
+    return swatch && /rgb\(/.test(getComputedStyle(swatch).backgroundColor);
+  }
+});
+
+// === Graphing keypad — every button ===
+async function buildGraphKeypadTests() {
+  await waitForReady();
+  await resetToGraphing();
+  await addGraphRow('');
+  const { d } = ctx();
+  const buttons = Array.from(d.querySelectorAll('.graph-keypad .key'));
+  buttons.forEach(btn => {
+    const dataInsert = btn.dataset.insert;
+    const dataLatex = btn.dataset.latex;
+    const dataCmd = btn.dataset.cmd;
+    const dataLetter = btn.dataset.letter;
+    const label = dataInsert || dataLatex || dataCmd || dataLetter || btn.dataset.latexTex || btn.textContent.trim().slice(0,12);
+
+    const id = `graph-key-${dataCmd || (dataLetter?'L'+dataLetter:'') || (dataInsert?'i'+dataInsert:'') || (dataLatex?'l'+dataLatex:'') || label}`;
+    tests.push({
+      id, category: 'graph-keypad',
+      desc: `graph keypad: "${label}" inserts/acts on focused row`,
+      async run() {
+        await resetToGraphing();
+        const mf = await addGraphRow('');
+        const { d } = ctx();
+        if (btn.dataset.needsOperand !== undefined) {
+          mf.value = 'x';
+          mf.dispatchEvent(new Event('input', { bubbles: true }));
+          await sleep(30);
+        } else if (dataCmd === 'backspace' || dataCmd === 'left' || dataCmd === 'right') {
+          mf.value = 'x';
+          mf.dispatchEvent(new Event('input', { bubbles: true }));
+          await sleep(30);
+        }
+        const before = mf.value;
+        const live = d.querySelector(`.graph-keypad .key${selectorFor(btn)}`);
+        if (!live || live.classList.contains('is-disabled')) return false;
+        live.click();
+        await sleep(60);
+        if (dataCmd === 'enter') {
+          // Enter adds a new expression row
+          return d.querySelectorAll('.expr-row').length >= 2;
+        }
+        if (dataCmd === 'functions') {
+          return d.getElementById('fn-panel').classList.contains('open');
+        }
+        if (dataCmd === 'audio') {
+          return true;  // Web Speech API is async; just confirm no crash
+        }
+        if (dataCmd === 'abc') {
+          return d.querySelector('.graph-keypad').dataset.mode === 'alpha';
+        }
+        if (dataCmd === 'alpha-back') {
+          return d.querySelector('.graph-keypad').dataset.mode === 'numeric';
+        }
+        if (dataCmd === 'backspace') return mf.value.length < before.length;
+        if (dataCmd === 'left' || dataCmd === 'right') return true;
+        return mf.value !== before;
+      }
+    });
+  });
+}
+
+// === f(x) function library — every category & every function ===
+async function buildFunctionLibraryTests() {
+  await waitForReady();
+  await resetToGraphing();
+  const { d } = ctx();
+  d.querySelector('.graph-keypad .key[data-cmd="functions"]').click();
+  await sleep(60);
+  const sections = Array.from(d.querySelectorAll('#fn-panel-body .fn-section'));
+  sections.forEach(sec => {
+    const cat = sec.querySelector('h4').textContent.trim();
+    Array.from(sec.querySelectorAll('.fn-btn')).forEach(btn => {
+      const insertStr = btn.dataset.insert;
+      const wired = btn.dataset.wired !== 'false';
+      const label = insertStr.replace(/\\left\(#0\\right\)/, '').replace(/\\operatorname\{([^}]+)\}/, '$1');
+      if (wired) {
+        tests.push({
+          id: `fn-${cat.replace(/\s+/g, '_')}-${label}`, category: 'function-library',
+          desc: `f(x) [${cat}]: clicking "${label}" inserts into focused math-field & closes panel`,
+          async run() {
+            await resetToGraphing();
+            const mf = await addGraphRow('');
+            const { d } = ctx();
+            d.querySelector('.graph-keypad .key[data-cmd="functions"]').click();
+            await sleep(50);
+            const live = Array.from(d.querySelectorAll('#fn-panel-body .fn-btn')).find(b => b.dataset.insert === insertStr);
+            if (!live) return false;
+            live.click();
+            await sleep(80);
+            if (d.getElementById('fn-panel').classList.contains('open')) return false;
+            return mf.value !== '';
+          }
+        });
+      } else {
+        tests.push({
+          id: `fn-unwired-${cat.replace(/\s+/g, '_')}-${label}`, category: 'function-library-unwired',
+          desc: `f(x) [${cat}]: "${label}" is gated (disabled, badged, click is no-op)`,
+          async run() {
+            await resetToGraphing();
+            const mf = await addGraphRow('');
+            const { d } = ctx();
+            d.querySelector('.graph-keypad .key[data-cmd="functions"]').click();
+            await sleep(50);
+            const live = Array.from(d.querySelectorAll('#fn-panel-body .fn-btn')).find(b => b.dataset.insert === insertStr);
+            if (!live) return false;
+            // Verify visual gating
+            if (!live.classList.contains('unwired')) return false;
+            if (!live.querySelector('.fn-badge')) return false;
+            if (live.getAttribute('aria-disabled') !== 'true') return false;
+            // Click should NOT insert and should NOT close the panel
+            const before = mf.value;
+            live.click();
+            await sleep(60);
+            if (mf.value !== before) return false;
+            if (!d.getElementById('fn-panel').classList.contains('open')) return false;
+            return true;
+          }
+        });
+      }
+    });
+  });
+  tests.push({
+    id: 'fn-panel-close-x', category: 'function-library',
+    desc: 'f(x) library: × close button hides the panel',
+    async run() {
+      await resetToGraphing();
+      const { d } = ctx();
+      d.querySelector('.graph-keypad .key[data-cmd="functions"]').click();
+      await sleep(50);
+      if (!d.getElementById('fn-panel').classList.contains('open')) return false;
+      d.getElementById('fn-panel-close').click();
+      await sleep(40);
+      return !d.getElementById('fn-panel').classList.contains('open');
+    }
+  });
+}
+
+// === Graph settings (gear icon) — wired controls verified, stub controls clickable ===
+tests.push({
+  id: 'gear-open', category: 'graph-settings',
+  desc: 'Gear icon opens the settings panel',
+  async run() {
+    await resetToGraphing();
+    const { d } = ctx();
+    d.getElementById('graph-gear').click();
+    await sleep(40);
+    return d.getElementById('graph-settings').classList.contains('open');
+  }
+});
+tests.push({
+  id: 'gear-close', category: 'graph-settings',
+  desc: 'Click gear again closes the panel',
+  async run() {
+    await resetToGraphing();
+    const { d } = ctx();
+    d.getElementById('graph-gear').click();
+    await sleep(40);
+    d.getElementById('graph-gear').click();
+    await sleep(40);
+    return !d.getElementById('graph-settings').classList.contains('open');
+  }
+});
+tests.push({
+  id: 'gear-grid-toggle', category: 'graph-settings',
+  desc: 'Grid checkbox shortens/lengthens tick lines',
+  async run() {
+    await resetToGraphing();
+    await addGraphRow('y=x');
+    const { d } = ctx();
+    d.getElementById('graph-gear').click();
+    await sleep(40);
+    const cb = d.getElementById('gs-grid');
+    // function-plot draws grid by extending tick lines across the chart.
+    // When grid is off, y2="0" (short tick); when on, y2 is the negative chart height.
+    const tickY2 = () => parseFloat(d.querySelector('#graph .x.axis .tick line')?.getAttribute('y2') || 'NaN');
+    if (!cb.checked) cb.click();      // ensure on
+    await sleep(120);
+    const yOn = tickY2();
+    cb.click();                       // turn off
+    await sleep(120);
+    const yOff = tickY2();
+    cb.click();                       // back on
+    await sleep(120);
+    const yOnAgain = tickY2();
+    return Math.abs(yOn) > 10 && yOff === 0 && Math.abs(yOnAgain) > 10;
+  }
+});
+tests.push({
+  id: 'gear-xmin', category: 'graph-settings',
+  desc: 'Changing X min updates axis labels',
+  async run() {
+    await resetToGraphing();
+    await addGraphRow('y=x');
+    const { d } = ctx();
+    d.getElementById('graph-gear').click();
+    await sleep(40);
+    const xmin = d.getElementById('gs-xmin');
+    xmin.value = '-3';
+    xmin.dispatchEvent(new Event('input', { bubbles: true }));
+    await sleep(80);
+    const ticks = Array.from(d.querySelectorAll('#graph .x.axis .tick text')).map(t => t.textContent);
+    return ticks[0] === '−3' || ticks.includes('−3');
+  }
+});
+tests.push({
+  id: 'gear-xmax', category: 'graph-settings',
+  desc: 'Changing X max updates axis labels',
+  async run() {
+    await resetToGraphing();
+    await addGraphRow('y=x');
+    const { d } = ctx();
+    d.getElementById('graph-gear').click();
+    await sleep(40);
+    const xmax = d.getElementById('gs-xmax');
+    xmax.value = '5';
+    xmax.dispatchEvent(new Event('input', { bubbles: true }));
+    await sleep(80);
+    const ticks = Array.from(d.querySelectorAll('#graph .x.axis .tick text')).map(t => t.textContent);
+    return ticks[ticks.length - 1] === '5' || ticks.includes('5');
+  }
+});
+tests.push({
+  id: 'gear-ymin', category: 'graph-settings',
+  desc: 'Changing Y min updates Y axis range',
+  async run() {
+    await resetToGraphing();
+    await addGraphRow('y=x');
+    const { d } = ctx();
+    d.getElementById('graph-gear').click();
+    await sleep(40);
+    const ymin = d.getElementById('gs-ymin');
+    ymin.value = '-4';
+    ymin.dispatchEvent(new Event('input', { bubbles: true }));
+    await sleep(80);
+    const ticks = Array.from(d.querySelectorAll('#graph .y.axis .tick text')).map(t => t.textContent);
+    return ticks.includes('−4');
+  }
+});
+tests.push({
+  id: 'gear-ymax', category: 'graph-settings',
+  desc: 'Changing Y max updates Y axis range',
+  async run() {
+    await resetToGraphing();
+    await addGraphRow('y=x');
+    const { d } = ctx();
+    d.getElementById('graph-gear').click();
+    await sleep(40);
+    const ymax = d.getElementById('gs-ymax');
+    ymax.value = '6';
+    ymax.dispatchEvent(new Event('input', { bubbles: true }));
+    await sleep(80);
+    const ticks = Array.from(d.querySelectorAll('#graph .y.axis .tick text')).map(t => t.textContent);
+    return ticks.includes('6');
+  }
+});
+tests.push({
+  id: 'gear-xlabel', category: 'graph-settings',
+  desc: 'Changing X label renders it on the chart',
+  async run() {
+    await resetToGraphing();
+    await addGraphRow('y=x');
+    const { d } = ctx();
+    d.getElementById('graph-gear').click();
+    await sleep(40);
+    const inp = d.getElementById('gs-xlabel');
+    inp.value = 'time';
+    inp.dispatchEvent(new Event('input', { bubbles: true }));
+    await sleep(80);
+    const text = d.querySelector('#graph')?.textContent || '';
+    return text.includes('time');
+  }
+});
+tests.push({
+  id: 'gear-ylabel', category: 'graph-settings',
+  desc: 'Changing Y label renders it on the chart',
+  async run() {
+    await resetToGraphing();
+    await addGraphRow('y=x');
+    const { d } = ctx();
+    d.getElementById('graph-gear').click();
+    await sleep(40);
+    const inp = d.getElementById('gs-ylabel');
+    inp.value = 'depth';
+    inp.dispatchEvent(new Event('input', { bubbles: true }));
+    await sleep(80);
+    const text = d.querySelector('#graph')?.textContent || '';
+    return text.includes('depth');
+  }
+});
+// Reset settings panel inputs to defaults — earlier tests in the suite mutate
+// xmin/xmax/labels, so step tests must restore a known baseline.
+async function resetGraphSettings() {
+  const { d } = ctx();
+  d.getElementById('graph-gear').click();
+  await sleep(40);
+  const setVal = (id, v) => {
+    const el = d.getElementById(id);
+    el.value = v;
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+  };
+  setVal('gs-xmin', '-10');
+  setVal('gs-xmax', '10');
+  setVal('gs-ymin', '-8');
+  setVal('gs-ymax', '8');
+  setVal('gs-xlabel', '');
+  setVal('gs-ylabel', '');
+  setVal('gs-xstep', '');
+  setVal('gs-ystep', '');
+  await sleep(150);
+}
+
+tests.push({
+  id: 'gear-xstep', category: 'graph-settings',
+  desc: 'Changing X step rewrites axis tick spacing',
+  async run() {
+    await resetToGraphing();
+    await addGraphRow('y=x');
+    await resetGraphSettings();
+    const { d } = ctx();
+    const xstep = d.getElementById('gs-xstep');
+    xstep.value = '5';
+    xstep.dispatchEvent(new Event('input', { bubbles: true }));
+    await sleep(400);
+    const ticks = Array.from(d.querySelectorAll('#graph .x.axis .tick text')).map(t => t.textContent);
+    // With domain [-10,10] and step 5 we expect exactly: −10, −5, 0, 5, 10
+    return ticks.length === 5 && ticks[0].includes('10') && ticks[2] === '0' && ticks[4] === '10';
+  }
+});
+tests.push({
+  id: 'gear-ystep', category: 'graph-settings',
+  desc: 'Changing Y step rewrites Y axis tick spacing',
+  async run() {
+    await resetToGraphing();
+    await addGraphRow('y=x');
+    await resetGraphSettings();
+    const { d } = ctx();
+    const ystep = d.getElementById('gs-ystep');
+    ystep.value = '4';
+    ystep.dispatchEvent(new Event('input', { bubbles: true }));
+    await sleep(400);
+    const ticks = Array.from(d.querySelectorAll('#graph .y.axis .tick text')).map(t => t.textContent);
+    // With domain [-8,8] and step 4 → −8, −4, 0, 4, 8
+    return ticks.length === 5 && ticks[2] === '0';
+  }
+});
+// Visual-stub controls — verify clickable (no JS error)
+['gs-axis-numbers','gs-minor','gs-arrows','gs-xaxis','gs-yaxis'].forEach(id => {
+  tests.push({
+    id: `gear-stub-${id}`, category: 'graph-settings-stubs',
+    desc: `Visual stub ${id} can be toggled without error`,
+    async run() {
+      await resetToGraphing();
+      const { d } = ctx();
+      d.getElementById('graph-gear').click();
+      await sleep(40);
+      const cb = d.getElementById(id);
+      if (!cb) return false;
+      cb.click(); await sleep(20);
+      return true;
+    }
+  });
+});
+tests.push({
+  id: 'gear-cart-polar', category: 'graph-settings',
+  desc: 'Polar mini-button is disabled (no-op click), Cartesian stays active',
+  async run() {
+    await resetToGraphing();
+    const { d } = ctx();
+    d.getElementById('graph-gear').click();
+    await sleep(40);
+    const cart = d.getElementById('gs-grid-cart');
+    const polar = d.getElementById('gs-grid-polar');
+    // Polar should have "Soon" badge and be marked disabled
+    if (!polar.classList.contains('gs-mini-disabled')) return false;
+    if (!polar.querySelector('.fn-badge')) return false;
+    // Cartesian active at start
+    if (!cart.classList.contains('active')) return false;
+    // Clicking polar must NOT swap the active state
+    polar.click();
+    await sleep(40);
+    return cart.classList.contains('active') && !polar.classList.contains('active');
+  }
+});
+tests.push({
+  id: 'gear-angle-toggle', category: 'graph-settings-stubs',
+  desc: 'Radians/Degrees pill toggles active state',
+  async run() {
+    await resetToGraphing();
+    const { d } = ctx();
+    d.getElementById('graph-gear').click();
+    await sleep(40);
+    const deg = d.querySelector('.gs-angle-toggle button[data-angle="degrees"]');
+    deg.click(); await sleep(20);
+    return deg.classList.contains('active') &&
+           !d.querySelector('.gs-angle-toggle button[data-angle="radians"]').classList.contains('active');
+  }
+});
+
+// ------------------- runner -------------------
+function renderResults(rows) {
+  const filterFail = els.filterFail.checked;
+  const visible = filterFail ? rows.filter(r => !r.pass) : rows;
+  if (!visible.length) { els.results.innerHTML = '<div class="empty">No results.</div>'; return; }
+  els.results.innerHTML = [
+    '<div class="row head"><span>Category</span><span>Test</span><span>Status</span></div>',
+    ...visible.map(r => `
+      <div class="row ${r.pass ? 'pass' : 'fail'}">
+        <span class="pill">${esc(r.category)}</span>
+        <code title="${esc(r.id)}">${esc(r.desc || r.id)}</code>
+        <span class="status ${r.pass ? 'pass' : 'fail'}">${r.pass ? 'PASS' : 'FAIL'}</span>
+      </div>`)
+  ].join('');
+}
+function esc(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+async function runAll() {
+  els.run.disabled = true;
+  els.results.innerHTML = '<div class="empty">Building test list…</div>';
+  await waitForReady();
+  // Dynamic test builders
+  await buildScientificHomeButtonTests();
+  await buildAbcButtonTests();
+  await buildFuncButtonTests();
+  await buildGraphKeypadTests();
+  await buildFunctionLibraryTests();
+  els.results.innerHTML = '<div class="empty">Running…</div>';
+  const t0 = performance.now();
+  const results = [];
+  for (let i = 0; i < tests.length; i++) {
+    const t = tests[i];
+    let pass = false, err = null;
+    try { pass = await t.run(); }
+    catch (e) { err = String(e); }
+    results.push({ id: t.id, category: t.category, desc: t.desc, pass: !!pass, error: err });
+    if (i > 0 && i % 25 === 0) {
+      // Light progress signal
+      els.dur.textContent = `${i}/${tests.length}…`;
+    }
+  }
+  const t1 = performance.now();
+  lastResults = results;
+  const passed = results.filter(r => r.pass).length;
+  els.total.textContent = results.length;
+  els.pass.textContent = passed;
+  els.fail.textContent = results.length - passed;
+  els.dur.textContent = `${((t1 - t0) / 1000).toFixed(2)}s`;
+  renderResults(results);
+  els.run.disabled = false;
+}
+
+els.run.addEventListener('click', runAll);
+</script>
+</body>
+</html>

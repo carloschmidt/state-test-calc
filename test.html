@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Calculator Test Runner</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;500;600;700&display=swap" />
+<style>
+  :root {
+    --bg: #FFFFFF;
+    --panel: #F7F8F8;
+    --border: #E3E5E8;
+    --ink: #1D1D1D;
+    --muted: #424147;
+    --blue: #0D64F2;
+    --blue-tint: #E6F0FF;
+    --pass: #138a3d;
+    --pass-bg: #E6F4EA;
+    --fail: #C32113;
+    --fail-bg: #FBE9E7;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--panel); color: var(--ink); font-family: 'Open Sans', sans-serif; }
+  .app { display: grid; grid-template-columns: 380px 1fr; min-height: 100vh; }
+  .controls { background: var(--bg); border-right: 1px solid var(--border); padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+  .controls h1 { font-size: 18px; margin: 0; }
+  .controls .summary {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+    padding: 12px; font-size: 14px;
+  }
+  .summary .stat { display: flex; justify-content: space-between; padding: 2px 0; }
+  .summary .stat b { font-weight: 600; }
+  .summary .stat.pass b { color: var(--pass); }
+  .summary .stat.fail b { color: var(--fail); }
+  button.run {
+    background: var(--blue); color: #fff; border: 0;
+    border-radius: 8px; padding: 10px 16px; font: inherit; font-weight: 600; cursor: pointer;
+    transition: all .3s;
+  }
+  button.run:hover { background: #114DBC; }
+  button.run:disabled { opacity: .5; cursor: default; }
+  .controls label { display: flex; align-items: center; gap: 8px; font-size: 14px; cursor: pointer; }
+  .results { padding: 16px; overflow: auto; }
+  .row {
+    display: grid; grid-template-columns: 140px 1fr 220px 220px 60px;
+    gap: 12px; padding: 8px 10px; border-radius: 6px; font-size: 13px; align-items: center;
+    border-bottom: 1px solid var(--border);
+  }
+  .row.head { font-weight: 600; background: var(--panel); border-radius: 8px; border: 1px solid var(--border); margin-bottom: 8px; position: sticky; top: 0; }
+  .row.pass { background: var(--pass-bg); }
+  .row.fail { background: var(--fail-bg); }
+  .row .status { font-weight: 600; text-align: center; }
+  .row .status.pass { color: var(--pass); }
+  .row .status.fail { color: var(--fail); }
+  .row code { font-family: 'SF Mono', Menlo, monospace; font-size: 12px; }
+  .pill {
+    display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600;
+    background: var(--blue-tint); color: var(--blue);
+  }
+  iframe.calc {
+    border: 1px solid var(--border); border-radius: 6px;
+    width: 100%; height: 540px; background: #fff;
+  }
+  details { font-size: 12px; }
+  .empty { color: var(--muted); padding: 40px; text-align: center; }
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="controls">
+    <h1>Calculator test runner</h1>
+    <iframe class="calc" id="calc" src="index.html?testharness=1"></iframe>
+    <button class="run" id="run">Run all tests</button>
+    <label><input type="checkbox" id="filter-fail" /> Show failures only</label>
+    <div class="summary" id="summary">
+      <div class="stat"><span>Total</span><b id="total">—</b></div>
+      <div class="stat pass"><span>Passed</span><b id="pass">—</b></div>
+      <div class="stat fail"><span>Failed</span><b id="fail">—</b></div>
+      <div class="stat"><span>Duration</span><b id="dur">—</b></div>
+    </div>
+    <details>
+      <summary>How it works</summary>
+      <p>Each test loads its input into the calculator's math-field, presses Enter, then compares the rendered result against the expected value. Numeric tests use a tolerance (default 1e-10).</p>
+      <p>Tests are loaded from <code>tests.json</code>. Edit that file to add cases.</p>
+    </details>
+  </div>
+  <div class="results" id="results">
+    <div class="empty">Click "Run all tests" to begin.</div>
+  </div>
+</div>
+
+<script>
+const TOLERANCE_DEFAULT = 1e-10;
+
+const els = {
+  iframe: document.getElementById('calc'),
+  run:    document.getElementById('run'),
+  total:  document.getElementById('total'),
+  pass:   document.getElementById('pass'),
+  fail:   document.getElementById('fail'),
+  dur:    document.getElementById('dur'),
+  results: document.getElementById('results'),
+  filterFail: document.getElementById('filter-fail'),
+};
+
+let lastResults = [];
+els.filterFail.addEventListener('change', () => renderResults(lastResults));
+
+async function loadTests() {
+  const r = await fetch('tests.json?cb=' + Date.now(), { cache: 'no-store' });
+  const j = await r.json();
+  return j.tests;
+}
+
+function getCalcCtx() {
+  const w = els.iframe.contentWindow;
+  const d = els.iframe.contentDocument || w.document;
+  return {
+    mf: d.getElementById('mf'),
+    angleBtn: (mode) => d.querySelector(`.angle button[data-angle="${mode}"]`),
+    activeAngle: () => d.querySelector('.angle button.active')?.dataset.angle,
+    clearAll: d.getElementById('clear-all'),
+    lastResultLatex: () => {
+      const rows = d.querySelectorAll('.history .row:not(.blank-row)');
+      const last = rows[rows.length - 1];
+      if (!last) return null;
+      // Status chips replace the KaTeX render — expose the underlying token
+      // so tests still see e.g. "\\text{undefined}".
+      const chip = last.querySelector('.res .status-chip');
+      if (chip) return `\\text{${chip.dataset.status}}`;
+      // Normal numeric results: read raw LaTeX from KaTeX's <annotation>
+      const annot = last.querySelector('.res .katex-mathml annotation');
+      const txt = (annot?.textContent || '').replace(/^=\s*/, '').trim();
+      return txt;
+    }
+  };
+}
+
+async function waitForCalcReady() {
+  // The iframe needs MathLive's custom element defined and the math-field present
+  return new Promise(resolve => {
+    const check = () => {
+      const ctx = getCalcCtx();
+      if (ctx.mf && ctx.mf.executeCommand) resolve();
+      else setTimeout(check, 30);
+    };
+    check();
+  });
+}
+
+function compareResult(expected, latexResult, tolerance) {
+  if (typeof expected === 'string' && expected.startsWith('text:')) {
+    const want = expected.slice(5);
+    // Matches \text{undefined}, \text{overflow}, \text{error}
+    const got = (latexResult.match(/\\text\{([^}]+)\}/) || [])[1] || '';
+    return { ok: got === want, gotDisplay: got || latexResult };
+  }
+  if (typeof expected === 'string') {
+    // Exact string match (after trim) — used for matrix/array results like "[1, 2, 3, 4]"
+    return { ok: latexResult.trim() === expected, gotDisplay: latexResult };
+  }
+  // Numeric comparison — parse the latex result
+  const num = parseFloat(latexResult);
+  if (Number.isNaN(num)) {
+    return { ok: false, gotDisplay: latexResult, reason: 'not a number' };
+  }
+  const tol = tolerance ?? TOLERANCE_DEFAULT;
+  const ok = Math.abs(num - expected) <= tol * Math.max(1, Math.abs(expected));
+  return { ok, gotDisplay: String(num) };
+}
+
+async function runOne(test, ctx) {
+  // Set angle mode if specified (default: don't touch)
+  if (test.mode && ctx.activeAngle() !== test.mode) {
+    ctx.angleBtn(test.mode).click();
+    await new Promise(r => setTimeout(r, 5));
+  }
+  // Reset input
+  ctx.mf.value = '';
+  ctx.mf.focus();
+  ctx.mf.value = test.input;
+  // Press Enter (simulating evaluate)
+  ctx.mf.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  await new Promise(r => setTimeout(r, 10));
+  const got = ctx.lastResultLatex();
+  const cmp = compareResult(test.expected, got, test.tolerance);
+  return {
+    id: test.id,
+    category: test.category,
+    input: test.input,
+    expected: test.expected,
+    got: cmp.gotDisplay,
+    rawLatex: got,
+    pass: cmp.ok,
+    note: test.note
+  };
+}
+
+function renderResults(rows) {
+  const filterFail = els.filterFail.checked;
+  const visible = filterFail ? rows.filter(r => !r.pass) : rows;
+  if (!visible.length) {
+    els.results.innerHTML = '<div class="empty">No results to show.</div>';
+    return;
+  }
+  const html = [
+    '<div class="row head"><span>Category</span><span>Input</span><span>Expected</span><span>Got</span><span>Status</span></div>',
+    ...visible.map(r => `
+      <div class="row ${r.pass ? 'pass' : 'fail'}">
+        <span class="pill">${r.category}</span>
+        <code title="${escapeAttr(r.id)}">${escapeHtml(r.input)}</code>
+        <code>${escapeHtml(String(r.expected))}</code>
+        <code>${escapeHtml(String(r.got))}</code>
+        <span class="status ${r.pass ? 'pass' : 'fail'}">${r.pass ? 'PASS' : 'FAIL'}</span>
+      </div>`)
+  ].join('');
+  els.results.innerHTML = html;
+}
+
+function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function escapeAttr(s) { return escapeHtml(s); }
+
+async function runAll() {
+  els.run.disabled = true;
+  els.results.innerHTML = '<div class="empty">Running…</div>';
+  const t0 = performance.now();
+  const tests = await loadTests();
+  await waitForCalcReady();
+  const ctx = getCalcCtx();
+  // Ensure clean start
+  ctx.clearAll.click();
+  const results = [];
+  for (let i = 0; i < tests.length; i++) {
+    // Clear history every 20 tests to avoid O(N²) re-render of accumulated rows.
+    if (i > 0 && i % 20 === 0) {
+      ctx.clearAll.click();
+      await new Promise(r => setTimeout(r, 5));
+    }
+    const r = await runOne(tests[i], ctx);
+    results.push(r);
+  }
+  const t1 = performance.now();
+  lastResults = results;
+  const passed = results.filter(r => r.pass).length;
+  els.total.textContent = results.length;
+  els.pass.textContent = passed;
+  els.fail.textContent = results.length - passed;
+  els.dur.textContent = `${((t1 - t0) / 1000).toFixed(2)}s`;
+  renderResults(results);
+  els.run.disabled = false;
+}
+
+els.run.addEventListener('click', runAll);
+</script>
+</body>
+</html>
