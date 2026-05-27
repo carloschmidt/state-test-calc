@@ -1601,6 +1601,13 @@
         if (target === 'graphing') {
           // Re-render graph once visible so it picks up correct dimensions
           renderGraph();
+          // Focus the first expression math-field so physical keyboard input
+          // works without an extra click. Defer past the renderGraph DOM
+          // replace + browser focus settling.
+          requestAnimationFrame(() => {
+            const firstMf = document.querySelector('#view-graphing .expr-row math-field');
+            if (firstMf && typeof firstMf.focus === 'function') firstMf.focus();
+          });
         }
       });
     });
@@ -3196,7 +3203,11 @@
   let shiftOn = false;
 
   function wireKeypad() {
-    document.querySelectorAll('.key').forEach(k => {
+    // Only target the scientific keypad. The graphing keypad has its own
+    // handler (handleGraphKey); attaching this one too would steal focus from
+    // the graphing math-field back to the scientific one, breaking physical
+    // keyboard input in the graphing view.
+    document.querySelectorAll('#view-scientific .key').forEach(k => {
       k.addEventListener('click', (e) => {
         e.preventDefault();
         if (k.classList.contains('is-disabled')) return;
